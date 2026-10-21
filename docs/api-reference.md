@@ -26,6 +26,8 @@
 
 ::: checkmodel.check_convergence
 
+::: checkmodel.check_predictions
+
 ## Result types
 
 ::: checkmodel.CheckResult
@@ -51,6 +53,8 @@
 ::: checkmodel.SingularityResult
 
 ::: checkmodel.ConvergenceResult
+
+::: checkmodel.PredictionsResult
 
 ## Performance metrics
 
@@ -81,6 +85,22 @@
 ::: checkmodel.variance_components
 
 ::: checkmodel.VarianceComponents
+
+## Bayesian models
+
+::: checkmodel.bayesian
+
+::: checkmodel.BayesianModel
+    options:
+      members: false
+
+::: checkmodel.r2_bayes
+
+::: checkmodel.BayesR2Result
+
+::: checkmodel.looic
+
+::: checkmodel.LooResult
 
 ## Plotting
 

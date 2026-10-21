@@ -7,7 +7,9 @@ A Python port of the R package ``performance`` (easystats).
 >>> report.plot()  # doctest: +SKIP
 """
 
+from ._bayes import BayesianModel, bayesian
 from ._introspection import BaseAdapter, Term, as_adapter, register_adapter
+from ._mcmc import LooResult
 from ._types import CheckNotApplicableError, ModelAdapter, ModelType, UnsupportedModelError
 from .checks import (
     AutocorrelationResult,
@@ -20,6 +22,7 @@ from .checks import (
     NormalityResult,
     OutliersResult,
     OverdispersionResult,
+    PredictionsResult,
     RandomEffectsNormalityResult,
     SingularityResult,
     ZeroInflationResult,
@@ -32,17 +35,21 @@ from .checks import (
     check_normality,
     check_outliers,
     check_overdispersion,
+    check_predictions,
     check_singularity,
     check_zeroinflation,
 )
 from .metrics import (
+    BayesR2Result,
     ICCResult,
     R2Result,
     VarianceComponents,
     compare_performance,
     icc,
+    looic,
     model_performance,
     r2,
+    r2_bayes,
     r2_coxsnell,
     r2_mcfadden,
     r2_nagelkerke,
@@ -56,6 +63,8 @@ __version__ = "0.1.0"
 __all__ = [
     "AutocorrelationResult",
     "BaseAdapter",
+    "BayesR2Result",
+    "BayesianModel",
     "BinnedResidualsResult",
     "CheckNotApplicableError",
     "CheckResult",
@@ -63,12 +72,14 @@ __all__ = [
     "ConvergenceResult",
     "HeteroscedasticityResult",
     "ICCResult",
+    "LooResult",
     "ModelAdapter",
     "ModelCheckReport",
     "ModelType",
     "NormalityResult",
     "OutliersResult",
     "OverdispersionResult",
+    "PredictionsResult",
     "R2Result",
     "RandomEffectsNormalityResult",
     "SingularityResult",
@@ -78,6 +89,7 @@ __all__ = [
     "ZeroInflationResult",
     "__version__",
     "as_adapter",
+    "bayesian",
     "binned_residuals",
     "check_autocorrelation",
     "check_collinearity",
@@ -87,12 +99,15 @@ __all__ = [
     "check_normality",
     "check_outliers",
     "check_overdispersion",
+    "check_predictions",
     "check_singularity",
     "check_zeroinflation",
     "compare_performance",
     "icc",
+    "looic",
     "model_performance",
     "r2",
+    "r2_bayes",
     "r2_coxsnell",
     "r2_mcfadden",
     "r2_nagelkerke",

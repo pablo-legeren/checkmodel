@@ -9,13 +9,16 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .._introspection import BaseAdapter, as_adapter
+from .._bayes import as_bayesian
+from .._introspection import as_adapter
 from .._types import ArrayLike
 from .performance import model_performance
 
 __all__ = ["compare_performance"]
 
-_IC = ("AIC", "AICc", "BIC")
+_IC = ("AIC", "AICc", "BIC", "WAIC")
+# R drops these from the ranking: raw criteria (their weights stay) and LOO terms.
+_NOT_RANKED = (*_IC, "LOOIC", "LOOIC_SE", "ELPD", "ELPD_SE")
 _LOWER_IS_BETTER = ("RMSE", "Sigma", "Log_loss")
 
 
@@ -25,7 +28,7 @@ def _ic_weight(ic: pd.Series) -> pd.Series:
     return f / f.sum(skipna=False)
 
 
-def _same_data(adapters: Sequence[BaseAdapter]) -> bool:
+def _same_data(adapters: Sequence[Any]) -> bool:
     first = adapters[0].y
     return all(a.y.shape == first.shape and np.allclose(a.y, first) for a in adapters[1:])
 
@@ -97,15 +100,18 @@ def compare_performance(
     """
     if names is not None and len(names) != len(models):
         raise ValueError(f"Got {len(names)} names for {len(models)} models.")
-    entries: list[tuple[str, BaseAdapter]] = []
-    for i, m in enumerate(models):
-        name = names[i] if names is not None else f"Model {i + 1}"
+
+    def resolve(m: Any) -> Any:
         if isinstance(m, tuple):
-            entries.append((name, as_adapter(*m)))
-        else:
-            entries.append((name, as_adapter(m, X, y)))
+            return as_adapter(*m)
+        bayes = as_bayesian(m)
+        return bayes if bayes is not None else as_adapter(m, X, y)
+
+    entries: list[tuple[str, Any]] = []
+    for i, m in enumerate(models):
+        entries.append((names[i] if names is not None else f"Model {i + 1}", resolve(m)))
     for name, m in named_models.items():
-        entries.append((name, as_adapter(*m) if isinstance(m, tuple) else as_adapter(m, X, y)))
+        entries.append((name, resolve(m)))
     if not entries:
         raise ValueError("Pass at least one model.")
 
@@ -130,7 +136,7 @@ def compare_performance(
         )
     if rank:
         # R drops the raw criteria and keeps their weights at the end.
-        return _rank(table.drop(columns=[c for c in _IC if c in table]), verbose)
+        return _rank(table.drop(columns=[c for c in _NOT_RANKED if c in table]), verbose)
     columns = [c for c in table.columns if not c.endswith("_wt")]
     for ic in _IC:
         if ic in columns:

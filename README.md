@@ -23,7 +23,11 @@ pip install checkmodel
 ```
 
 Python 3.10 or newer. Depends on numpy, scipy, pandas, statsmodels, scikit-learn
-and matplotlib.
+and matplotlib. For Bayesian models (PyMC, bambi; Python 3.12+):
+
+```bash
+pip install "checkmodel[bayes]"
+```
 
 ## Quick example
 
@@ -39,6 +43,7 @@ report.plot()
 ```text
 # Model checks: OLS (gaussian, identity link), n = 32
 
+Posterior predictive check: OK: Model-predicted data resemble the observed data (mean p = 0.400, sd p = 0.460).
 Normality of residuals: Warning: Non-normality of residuals detected (p = 0.021).
 Homogeneity of variance: OK: Error variance appears to be homoscedastic (p = 0.402).
 Collinearity: OK: Low collinearity (all VIF < 5; max 1.77).
@@ -62,6 +67,7 @@ check_model(model, X=X, y=y)
 | Function | What it does | Method |
 |---|---|---|
 | `check_model(model)` | Runs every check that applies and plots them together | Orchestrator |
+| `check_predictions(model)` | Do data simulated from the model look like the data? | Posterior predictive check |
 | `check_normality(model)` | Normality of residuals | Shapiro-Wilk (n < 5000), Kolmogorov-Smirnov (n ≥ 5000) |
 | `check_heteroscedasticity(model)` | Constant error variance | Breusch-Pagan / Cook-Weisberg score test |
 | `check_collinearity(model)` | Multicollinearity | (Generalized) variance inflation factors with CIs |
@@ -71,10 +77,11 @@ check_model(model, X=X, y=y)
 | `check_overdispersion(model)` | Variance larger than the mean in Poisson models | Pearson chi-squared / dispersion ratio |
 | `check_zeroinflation(model)` | Excess zeros in Poisson models | Predicted vs observed zeros |
 | `check_singularity(model)` | Random-effect variances at zero (mixed models) | Determinant of the random-effects covariance |
-| `check_convergence(model)` | Whether the fit converged | Relative gradient (mixed models), optimizer report |
+| `check_convergence(model)` | Whether the fit converged | R-hat and ESS (Bayesian), relative gradient (mixed models) |
 | `icc(model)` | Intraclass correlation (mixed models) | Adjusted and unadjusted ICC |
-| `r2(model)` | The R² that suits the model | R², adjusted R², Tjur, Nagelkerke, Nakagawa |
-| `r2_tjur`, `r2_nagelkerke`, `r2_coxsnell`, `r2_mcfadden`, `r2_nakagawa` | Pseudo-R² and mixed-model R² | |
+| `r2(model)` | The R² that suits the model | R², adjusted R², Tjur, Nagelkerke, Nakagawa, Bayesian |
+| `r2_tjur`, `r2_nagelkerke`, `r2_coxsnell`, `r2_mcfadden`, `r2_nakagawa`, `r2_bayes` | Pseudo-R², mixed-model and Bayesian R² | |
+| `looic(model)` | Leave-one-out cross-validation (Bayesian) | PSIS-LOO, as R's `loo` |
 | `model_performance(model)` | Metric table for one model | AIC, AICc, BIC, R², RMSE, Sigma, log loss, scoring rules, PCP |
 | `compare_performance(*models)` | Metric tables side by side, optional ranking | Adds Akaike weights |
 
@@ -108,9 +115,11 @@ report.skipped          # checks that don't apply to this model, and why
 | statsmodels | `MixedLM` results (linear mixed models) | Random intercepts and slopes via `groups=` and `re_formula=` |
 | scikit-learn | `LinearRegression`, `Ridge`, `Lasso`, `ElasticNet` (and their `CV` variants) | Pass `X=` and `y=` |
 | scikit-learn | `LogisticRegression` (binary) | Pass `X=` and `y=` |
+| PyMC, bambi | Fitted models (ArviZ `DataTree`) | Wrap with `bayesian(idata, model)`; Python 3.12+ |
 | Anything else | Objects implementing the `ModelAdapter` protocol | Five methods; see below |
 
-Which checks run depends on the model, as in R:
+Which checks run depends on the model, as in R. Every model also gets a
+posterior predictive check:
 
 | Model | Checks |
 |---|---|
@@ -119,6 +128,7 @@ Which checks run depends on the model, as in R:
 | Logistic regression | collinearity, outliers, binned residuals |
 | Poisson regression | collinearity, outliers, overdispersion |
 | Other GLMs | collinearity, outliers |
+| Bayesian (PyMC, bambi) | convergence (R-hat, effective sample size) |
 
 Your own model types can plug in by implementing five methods (`model_type`,
 `get_response`, `get_fitted`, `get_residuals` and `get_model_matrix`) or by
@@ -141,6 +151,9 @@ registering an adapter with `register_adapter()`.
 | `check_convergence(m)` | `check_convergence(m)` |
 | `check_normality(m, effects = "random")` | `check_normality(m, effects="random")` |
 | `icc(m)` | `icc(m)` |
+| `check_predictions(m)` | `check_predictions(m)` |
+| `r2_bayes(m)` | `r2_bayes(bayesian(idata, model))` |
+| `looic(m)` | `looic(bayesian(idata, model))` |
 | `r2(m)` | `r2(m)` |
 | `r2_tjur(m)`, `r2_nagelkerke(m)`, ... | `r2_tjur(m)`, `r2_nagelkerke(m)`, ... |
 | `model_performance(m)` | `model_performance(m)` |
@@ -174,7 +187,11 @@ statsmodels and numpy.
 
 `tests/r_reference/generate_reference.R` fits the same models in R 4.6 with
 `performance` 0.18.2, `lme4`, `lmtest` and `car`, and writes every statistic the
-test suite checks to `tests/r_reference/reference.json`. CI compares against that
+test suite checks to `tests/r_reference/reference.json`. For Bayesian models,
+`generate_bayes_reference.R` fits `rstanarm` models and exports their posterior
+draws; the tests run checkmodel on those same draws, so Bayesian R², PSIS-LOO,
+WAIC, R-hat and effective sample sizes are compared with `performance`, `loo`
+and `posterior` exactly, not just approximately. CI compares against that
 file, so it doesn't need R. Covered: leverage, standardized residuals, Cook's
 distance, log-likelihoods, every test statistic and p-value, VIFs and their
 intervals, outlier thresholds and flags, every R² variant, every

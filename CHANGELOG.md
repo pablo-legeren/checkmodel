@@ -18,6 +18,16 @@ All notable changes to this project are documented here. The format follows
 - `check_overdispersion()` and `check_zeroinflation()` for Poisson models;
   `check_model()` runs the overdispersion check on Poisson regressions.
 - Plots for random effects, overdispersion and zero-inflation.
+- Bayesian models from PyMC and bambi (`pip install "checkmodel[bayes]"`):
+  `bayesian()` reads a fitted model; `r2_bayes()`, `looic()` (PSIS-LOO),
+  WAIC, R-hat and bulk/tail ESS are ported from R's `performance`, `loo` and
+  `posterior` and validated on the same posterior draws; `check_model()`,
+  `check_convergence()`, `model_performance()` and `compare_performance()`
+  accept Bayesian models.
+- `check_predictions()`: posterior predictive checks for Bayesian models and
+  simulation-based ones for frequentist models, with p-values and a plot.
+  `check_model()` now starts with it, as in R (`random_state=` keeps reports
+  reproducible).
 
 ### Changed
 

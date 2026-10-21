@@ -44,7 +44,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7", "pytest-cov>=4"]
+test = [
+    "pytest>=7",
+    "pytest-cov>=4",
+    # The Bayesian tests rebuild posteriors with ArviZ 1.x, which needs Python 3.12+.
+    "arviz>=1.0; python_version >= '3.12'",
+]
+bayes = ["arviz>=1.0", "pymc>=6.0", "bambi>=0.21"]
 dev = [
     "checkmodel[test]",
     "ruff>=0.6",
@@ -72,6 +78,7 @@ packages = ["src/checkmodel"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+markers = ["slow: fits real PyMC/bambi models (needs the bayes extra)"]
 filterwarnings = ["error::FutureWarning:checkmodel"]
 
 [tool.coverage.run]
@@ -117,5 +124,5 @@ warn_return_any = false
 disallow_any_generics = false
 
 [[tool.mypy.overrides]]
-module = ["statsmodels.*", "sklearn.*", "scipy.*", "patsy.*", "matplotlib.*"]
+module = ["statsmodels.*", "sklearn.*", "scipy.*", "patsy.*", "matplotlib.*", "pymc.*", "bambi.*", "arviz.*"]
 ignore_missing_imports = true

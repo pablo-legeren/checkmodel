@@ -42,13 +42,29 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - run: pip install -e ".[test]"
-      - run: pytest --cov=checkmodel --cov-report=xml --cov-fail-under=90
+      # Bayesian tests need ArviZ 1.x (Python >= 3.12), so the coverage floor
+      # applies where the whole suite runs.
+      - run: >-
+          pytest --cov=checkmodel --cov-report=xml
+          ${{ contains(fromJSON('["3.12", "3.13"]'), matrix.python-version) && '--cov-fail-under=90' || '' }}
       - uses: codecov/codecov-action@v4
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         with:
           files: coverage.xml
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
+
+  bayes:
+    name: bayes (PyMC and bambi fits)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[test,bayes]"
+      - run: pytest tests/test_bayes.py tests/test_bayes_integration.py
 
   docs:
     runs-on: ubuntu-latest

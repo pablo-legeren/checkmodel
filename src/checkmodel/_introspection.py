@@ -980,6 +980,14 @@ def as_adapter(
         return SklearnAdapter(model, X, y)
     if isinstance(model, ModelAdapter):
         return ProtocolAdapter(model)
+    from ._bayes import looks_bayesian
+
+    if looks_bayesian(model):
+        raise UnsupportedModelError(
+            "This is a Bayesian model. It works with check_model(), check_predictions(), "
+            "check_convergence(), r2(), r2_bayes(), looic(), model_performance() and "
+            "compare_performance(); the residual-based checks need a frequentist fit."
+        )
     raise UnsupportedModelError(
         f"Don't know how to read a `{type(model).__name__}`. Pass a statsmodels OLS/WLS/GLM "
         "result, a scikit-learn linear model, or an object implementing `ModelAdapter`."

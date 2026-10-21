@@ -31,12 +31,14 @@ __all__ = [
     "plot_binned_residuals",
     "plot_check",
     "plot_collinearity",
+    "plot_convergence",
     "plot_homogeneity",
     "plot_linearity",
     "plot_model_check",
     "plot_normality",
     "plot_outliers",
     "plot_overdispersion",
+    "plot_predictions",
     "plot_qq",
     "plot_random_effects",
     "plot_random_effects_term",
@@ -499,7 +501,103 @@ def plot_binned_residuals(result: CheckResult, ax: Axes) -> Axes:
 
 
 # ----------------------------------------------------------------- dispatch
+def plot_predictions(result: CheckResult, ax: Axes) -> Axes:
+    """Posterior predictive check: replicated data against the observed data."""
+    from matplotlib.lines import Line2D
+
+    observed = result.observed  # type: ignore[attr-defined]
+    simulated = result.simulated  # type: ignore[attr-defined]
+    with _style():
+        if result.discrete:  # type: ignore[attr-defined]
+            values = np.unique(np.concatenate([np.unique(observed), np.unique(simulated)]))
+            values = values[values <= max(np.max(observed), np.quantile(simulated, 0.99))][:31]
+            counts = np.array([[np.sum(rep == v) for v in values] for rep in simulated])
+            lo, mid, hi = np.quantile(counts, [0.05, 0.5, 0.95], axis=0)
+            ax.vlines(values, lo, hi, color=_P["points"], linewidth=2.5, alpha=0.6)
+            ax.scatter(values, mid, color=_P["points"], s=22, zorder=3, linewidths=0)
+            observed_counts = [np.sum(observed == v) for v in values]
+            ax.scatter(values, observed_counts, color=_P["fit"], s=36, zorder=4, linewidths=0)
+            ax.set_xticks(values if values.shape[0] <= 15 else values[::2])
+            ax.set_xlabel("Value of the response")
+            ax.set_ylabel("Number of observations")
+            handles = [
+                Line2D([], [], marker="o", linestyle="", color=_P["fit"], label="Observed data"),
+                Line2D(
+                    [],
+                    [],
+                    marker="o",
+                    color=_P["points"],
+                    linewidth=2.5,
+                    label="Model-predicted (median, 90% interval)",
+                ),
+            ]
+        else:
+            lo = min(np.min(observed), np.quantile(simulated, 0.005))
+            hi = max(np.max(observed), np.quantile(simulated, 0.995))
+            grid = np.linspace(lo, hi, 256)
+            for rep in simulated:
+                if np.ptp(rep) > 0:
+                    density = stats.gaussian_kde(rep)(grid)
+                    ax.plot(grid, density, color=_P["points"], linewidth=0.8, alpha=0.25)
+            ax.plot(grid, stats.gaussian_kde(observed)(grid), color=_P["fit"], linewidth=2.2)
+            ax.set_xlabel("Response")
+            ax.set_ylabel("Density")
+            handles = [
+                Line2D([], [], color=_P["fit"], linewidth=2.2, label="Observed data"),
+                Line2D([], [], color=_P["points"], linewidth=1.2, label="Model-predicted data"),
+            ]
+        ax.legend(handles=handles, loc="best")
+        _titles(
+            ax,
+            "Posterior Predictive Check",
+            "Model-predicted data should resemble observed data",
+        )
+    return ax
+
+
+def plot_convergence(result: CheckResult, ax: Axes) -> Axes:
+    """R-hat of each parameter of a Bayesian model against the 1.01 threshold."""
+    from matplotlib.lines import Line2D
+
+    from ..checks.convergence import ESS_PER_CHAIN, RHAT_MAX
+
+    table = result.table  # type: ignore[attr-defined]
+    if table.empty:
+        raise TypeError("Convergence of frequentist models has no plot; read `.message` instead.")
+    with _style():
+        chains = cast(Any, result.adapter).chains  # a BayesianModel
+        min_ess = ESS_PER_CHAIN * chains
+        ok = (table["Rhat"] < RHAT_MAX) & (table[["ESS_bulk", "ESS_tail"]].min(axis=1) >= min_ess)
+        pos = np.arange(len(table))[::-1]
+        colors = np.where(ok, _P["good"], _P["critical"])
+        ax.hlines(pos, 1.0, table["Rhat"], color=_P["grid"], linewidth=1.5)
+        ax.scatter(table["Rhat"], pos, c=colors, s=40, zorder=3, linewidths=0)
+        ax.axvline(RHAT_MAX, color=_P["critical"], linewidth=1, linestyle=(0, (4, 3)))
+        ax.set_yticks(pos, table["Parameter"].tolist())
+        ax.tick_params(axis="y", labelcolor=_P["ink_secondary"])
+        ax.grid(axis="y", visible=False)
+        right = max(float(table["Rhat"].max()), RHAT_MAX) + 0.005
+        ax.set_xlim(min(0.995, float(table["Rhat"].min()) - 0.002), right)
+        handles = [
+            Line2D([], [], marker="o", linestyle="", color=_P["good"], label="Converged"),
+            Line2D(
+                [],
+                [],
+                marker="o",
+                linestyle="",
+                color=_P["critical"],
+                label=f"R-hat >= {RHAT_MAX} or ESS < {min_ess}",
+            ),
+        ]
+        ax.legend(handles=handles, loc="lower right")
+        _titles(ax, "Convergence", f"R-hat should stay left of {RHAT_MAX}")
+        ax.set_xlabel("R-hat (rank-normalized, split)")
+    return ax
+
+
 _SINGLE: dict[str, Callable[[Any, Any], Any]] = {
+    "convergence": plot_convergence,
+    "predictions": plot_predictions,
     "heteroscedasticity": lambda r, ax: plot_homogeneity(r.adapter, ax, r),
     "collinearity": plot_collinearity,
     "outliers": plot_outliers,
@@ -536,8 +634,10 @@ def plot_model_check(
 ) -> Figure:
     """Draw every diagnostic of a :class:`~checkmodel.ModelCheckReport` in one grid.
 
-    Linear models get six panels: linearity, homogeneity of variance,
-    influential observations, collinearity, normality and autocorrelation.
+    Linear models get seven panels: the posterior predictive check, linearity,
+    homogeneity of variance, influential observations, collinearity, normality
+    and autocorrelation. Bayesian models show the predictive check and the
+    R-hat of each parameter.
     Mixed models add one Q-Q panel per random-effect term; Poisson models an
     overdispersion panel. Singularity and convergence have no plot.
 
@@ -555,9 +655,12 @@ def plot_model_check(
     adapter = report.adapter
     het = report.get("heteroscedasticity")
     panels: list[Callable[[Axes], Any]] = []
-    if adapter.info.is_linear:
-        panels.append(lambda ax: plot_linearity(adapter, ax))
-    panels.append(lambda ax: plot_homogeneity(adapter, ax, het))
+    if "predictions" in report:
+        panels.append(partial(plot_predictions, report["predictions"]))
+    if isinstance(adapter, BaseAdapter):  # Bayesian models have no frequentist residuals
+        if adapter.info.is_linear:
+            panels.append(lambda ax: plot_linearity(adapter, ax))
+        panels.append(lambda ax: plot_homogeneity(adapter, ax, het))
     for key in ("outliers", "collinearity", "normality"):
         if key in report:
             panels.append(partial(_SINGLE[key], report[key]))
@@ -568,8 +671,12 @@ def plot_model_check(
     for key in ("autocorrelation", "binned_residuals", "overdispersion"):
         if key in report:
             panels.append(partial(_SINGLE[key], report[key]))
+    if "convergence" in report and not isinstance(adapter, BaseAdapter):
+        panels.append(partial(plot_convergence, report["convergence"]))
     count = len(panels)
-    cols = ncols or (3 if count > 4 else 2)
+    if count == 0:
+        raise ValueError("None of the checks in this report has a plot.")
+    cols = ncols or (3 if count > 4 else min(2, count))
     rows = math.ceil(count / cols)
     with _style():
         fig, axes = plt.subplots(

@@ -10,6 +10,7 @@ from .model_check import ModelCheckReport, check_model
 from .normality import NormalityResult, RandomEffectsNormalityResult, check_normality
 from .outliers import OutliersResult, check_outliers
 from .overdispersion import OverdispersionResult, check_overdispersion
+from .predictions import PredictionsResult, check_predictions
 from .singularity import SingularityResult, check_singularity
 from .zeroinflation import ZeroInflationResult, check_zeroinflation
 
@@ -24,6 +25,7 @@ __all__ = [
     "NormalityResult",
     "OutliersResult",
     "OverdispersionResult",
+    "PredictionsResult",
     "RandomEffectsNormalityResult",
     "SingularityResult",
     "ZeroInflationResult",
@@ -36,6 +38,7 @@ __all__ = [
     "check_normality",
     "check_outliers",
     "check_overdispersion",
+    "check_predictions",
     "check_singularity",
     "check_zeroinflation",
 ]

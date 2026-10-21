@@ -87,6 +87,7 @@ def r2(model: Model, X: ArrayLike | None = None, y: ArrayLike | None = None) -> 
     * Logistic regression with a 0/1 outcome: Tjur's R².
     * Other GLMs (Poisson, ...): Nagelkerke's R².
     * Linear mixed models: Nakagawa's conditional and marginal R².
+    * Bayesian models: Bayesian R² (see :func:`r2_bayes`).
 
     Parameters
     ----------
@@ -100,6 +101,13 @@ def r2(model: Model, X: ArrayLike | None = None, y: ArrayLike | None = None) -> 
     R2Result
         Mapping from measure name to value.
     """
+    from .._bayes import as_bayesian
+
+    bayes = as_bayesian(model)
+    if bayes is not None:
+        from .bayes import r2_bayes
+
+        return r2_bayes(bayes)  # type: ignore[return-value]
     adapter = as_adapter(model, X, y)
     info = adapter.info
     if info.is_mixed:

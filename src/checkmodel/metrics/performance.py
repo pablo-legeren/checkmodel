@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import warnings
 from collections.abc import Iterable
 from typing import Literal
@@ -10,8 +11,11 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from .._bayes import BayesianModel, as_bayesian
 from .._introspection import BaseAdapter, as_adapter
+from .._mcmc import psis_loo, waic
 from .._types import ArrayLike, CheckNotApplicableError, Model
+from .bayes import r2_bayes
 from .r2 import r2
 
 __all__ = ["model_performance"]
@@ -31,23 +35,48 @@ ALL_METRICS = (
 )
 COMMON_METRICS = ("AIC", "BIC", "R2", "R2_ADJ", "RMSE")
 EXTRA_METRICS = ("LOGLIK",)
+BAYES_METRICS = ("LOOIC", "WAIC", "R2", "RMSE", "SIGMA")
+BAYES_COMMON_METRICS = ("LOOIC", "WAIC", "R2", "RMSE")
 
 
-def _resolve_metrics(metrics: str | Iterable[str]) -> set[str]:
+def _resolve_metrics(metrics: str | Iterable[str], bayesian: bool = False) -> set[str]:
     if isinstance(metrics, str):
         if metrics.lower() == "all":
-            return set(ALL_METRICS)
+            return set(BAYES_METRICS if bayesian else ALL_METRICS)
         if metrics.lower() == "common":
-            return set(COMMON_METRICS)
+            return set(BAYES_COMMON_METRICS if bayesian else COMMON_METRICS)
         metrics = [metrics]
     aliases = {"LOG_LOSS": "LOGLOSS", "LOG_LIK": "LOGLIK"}
     wanted = {aliases.get(m.upper(), m.upper()) for m in metrics}
-    unknown = wanted - set(ALL_METRICS) - set(EXTRA_METRICS)
+    known = ALL_METRICS + EXTRA_METRICS + BAYES_METRICS
+    unknown = wanted - set(known)
     if unknown:
-        raise ValueError(
-            f"Unknown metrics {sorted(unknown)}; choose from {ALL_METRICS + EXTRA_METRICS}."
-        )
+        raise ValueError(f"Unknown metrics {sorted(unknown)}; choose from {sorted(set(known))}.")
     return wanted
+
+
+def _bayesian_performance(bayes: BayesianModel, wanted: set[str]) -> pd.DataFrame:
+    # performance::model_performance.stanreg(), on the posterior draws.
+    out: dict[str, float] = {}
+    if "LOOIC" in wanted and bayes.log_lik is not None:
+        loo = psis_loo(bayes.log_lik, r_eff=np.ones(bayes.n_obs))
+        out.update(
+            ELPD=loo.elpd_loo, ELPD_SE=loo.elpd_loo_se, LOOIC=loo.looic, LOOIC_SE=loo.looic_se
+        )
+    if "WAIC" in wanted and bayes.log_lik is not None:
+        out["WAIC"] = waic(bayes.log_lik)[0]
+    if "R2" in wanted:
+        with contextlib.suppress(CheckNotApplicableError):
+            out.update(r2_bayes(bayes))
+    if "RMSE" in wanted:
+        point = np.median(BayesianModel.flat(bayes.mu), axis=0)
+        out["RMSE"] = float(np.sqrt(np.mean((bayes.y - point) ** 2)))
+    if "SIGMA" in wanted:
+        if bayes.sigma is not None:
+            out["Sigma"] = float(np.median(bayes.sigma))
+        elif bayes.family in {"binomial", "poisson"}:
+            out["Sigma"] = 1.0
+    return pd.DataFrame([out])
 
 
 def _scoring_rules(adapter: BaseAdapter) -> tuple[float, float] | None:
@@ -100,6 +129,9 @@ def model_performance(
         One row. Metrics that do not apply to the model are left out, as in R:
         for example ``Log_loss`` and ``PCP`` only appear for binomial models.
         Mixed models report ``R2_conditional``, ``R2_marginal`` and ``ICC``.
+        Bayesian models report ``ELPD``, ``ELPD_SE``, ``LOOIC``, ``LOOIC_SE``
+        (PSIS-LOO), ``WAIC``, the Bayesian ``R2`` (plus ``R2_marginal`` for
+        multilevel models), ``RMSE`` and ``Sigma``, as for ``stanreg`` fits.
 
     Notes
     -----
@@ -108,6 +140,9 @@ def model_performance(
     its values are 2 lower. Penalized scikit-learn models have no
     likelihood-based criteria; AIC, AICc and BIC are omitted for them.
     """
+    bayes = as_bayesian(model)
+    if bayes is not None:
+        return _bayesian_performance(bayes, _resolve_metrics(metrics, bayesian=True))
     adapter = as_adapter(model, X, y)
     wanted = _resolve_metrics(metrics)
     info, n = adapter.info, adapter.n_obs

@@ -35,6 +35,12 @@ the Python version deliberately behaves differently.
 | `r2_nakagawa(m)`, `r2(m)` (`lmer`) | `r2_nakagawa(m)`, `r2(m)` | Yes |
 | `model_performance(m)` (`lmer`) | `model_performance(m)` | Yes, including `estimator` |
 | `hatvalues()`, `rstudent()`, `cooks.distance()` (`lmer`) | adapter `.hat`, `.std_residuals`, `.cooks_distance` | Yes |
+| `check_predictions(m)` | `check_predictions(m)` | Same idea; adds p-values, see below |
+| `r2_bayes(m)` | `r2_bayes(m)` | Yes, on the same draws (median, MAD, HDI) |
+| `looic(m)`, `loo::loo(m)` | `looic(m)` | Yes, including Pareto k |
+| `loo::waic(m)` | in `model_performance()` | Yes |
+| `posterior::rhat()`, `ess_bulk()`, `ess_tail()` | `check_convergence(m).to_dataframe()` | Yes |
+| `model_performance(m)` (`stanreg`) | `model_performance(m)` | Yes except `RMSE`; see below |
 
 ## Model formulas
 
@@ -48,6 +54,8 @@ the Python version deliberately behaves differently.
 | `lmer(y ~ x + (1 \| g), data)` | `smf.mixedlm("y ~ x", data, groups="g").fit()` |
 | `lmer(y ~ x + (x \| g), data)` | `smf.mixedlm("y ~ x", data, groups="g", re_formula="~x").fit()` |
 | `lmer(..., REML = FALSE)` | `.fit(reml=False)` |
+| `stan_glm(y ~ x, data)` | `bmb.Model("y ~ x", data)`, then `bayesian(model.fit(), model)` |
+| `stan_lmer(y ~ x + (1 \| g), data)` | `bmb.Model("y ~ x + (1\|g)", data)`, then `bayesian(...)` |
 
 ## Where the defaults differ, and why
 
@@ -96,6 +104,28 @@ models R checks overdispersion and zero-inflation with simulated (DHARMa)
 residuals. These are not ported yet, so the checks raise
 `CheckNotApplicableError` for those models.
 
+**Bayesian models.**
+
+- *Predictive checks report p-values.* R's `check_predictions()` only plots.
+  `checkmodel` also computes posterior predictive p-values for the mean, the SD
+  and (for counts) the share of zeros, and fails the check when one falls
+  outside [0.025, 0.975]. For frequentist models the replications are
+  simulated from the fitted distribution, as R's `simulate()` does.
+- *RMSE.* R computes it from `fitted()`, i.e. the linear predictor at the
+  posterior median of the coefficients, which only `rstanarm` provides.
+  `checkmodel` uses the posterior median of each expected value, which is
+  defined for any PyMC or bambi model. The difference is small (2.466 vs
+  2.469 for the mtcars test model).
+- *Not ported:* `R2_adjusted` (LOO-R², which relies on R's random number
+  stream), the Bayesian `ICC`, and `Log_loss` / `Score_*` for Bayesian models.
+- *Convergence verdict.* R reports R-hat and ESS without a verdict;
+  `checkmodel` flags R-hat >= 1.01 or bulk/tail ESS below 100 per chain
+  (Vehtari et al., 2021).
+- *Relative efficiency in LOO.* `loo()` on an `rstanarm` fit, and therefore
+  `model_performance()` in R, uses `r_eff = 1`; `checkmodel` does the same by
+  default. `looic(m, use_relative_eff=True)` matches
+  `loo(m, r_eff = relative_eff(...))` instead.
+
 ## Faithfully reproduced quirks
 
 These match R exactly, even though you might not expect them:
@@ -122,8 +152,8 @@ These match R exactly, even though you might not expect them:
 
 ## Not yet ported
 
-Generalized linear mixed models, Bayesian models (PyMC, bambi),
-`check_predictions()` (posterior predictive checks), `r2_bayes()`, simulated
-(DHARMa-style) residuals and the checks that depend on them (overdispersion
-and zero-inflation of negative binomial and mixed count models), ICC and R²
-confidence intervals, and `MixedLM` variance components (`vc_formula`).
+Generalized linear mixed models, simulated (DHARMa-style) residuals and the
+checks that depend on them (overdispersion and zero-inflation of negative
+binomial and mixed count models), ICC and R² confidence intervals for
+frequentist models, `MixedLM` variance components (`vc_formula`), and the
+Bayesian pieces listed above.

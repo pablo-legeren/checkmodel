@@ -28,6 +28,7 @@ print(report)
 ```text
 # Model checks: OLS (gaussian, identity link), n = 32
 
+Posterior predictive check: OK: Model-predicted data resemble the observed data (mean p = 0.400, sd p = 0.460).
 Normality of residuals: Warning: Non-normality of residuals detected (p = 0.021).
 Homogeneity of variance: OK: Error variance appears to be homoscedastic (p = 0.402).
 Collinearity: OK: Low collinearity (all VIF < 5; max 1.77).
@@ -117,6 +118,7 @@ check_zeroinflation(pois)
 ```text
 # Model checks: GLM (poisson, log link), n = 915
 
+Posterior predictive check: Warning: Observed data fall outside the model-predicted range for: sd (p < .001), proportion of 0s (p < .001).
 Collinearity: OK: Low collinearity (all VIF < 5; max 1.29).
 Influential observations: OK: No outliers detected (Cook's distance > 0.84).
 Overdispersion: Warning: Overdispersion detected (dispersion ratio = 1.829, p < .001).
@@ -142,6 +144,7 @@ check_model(mixed)
 ```text
 # Model checks: MixedLM (gaussian, identity link), n = 180
 
+Posterior predictive check: OK: Model-predicted data resemble the observed data (mean p = 0.460, sd p = 0.520).
 Normality of residuals: Warning: Non-normality of residuals detected (p < .001).
 Normality of random effects: OK: Random effects 'Subject: (Intercept)' appear as normally distributed (p = 0.428).
   OK: Random effects 'Subject: Days' appear as normally distributed (p = 0.898).
@@ -159,6 +162,46 @@ Skipped:
 ```python
 icc(mixed)   # Adjusted ICC: 0.722, Unadjusted ICC: 0.521
 r2(mixed)    # Conditional R2: 0.799, Marginal R2: 0.279
+```
+
+## Bayesian models
+
+Install the extra (Python 3.12+), fit with PyMC or bambi, and wrap the result
+with `bayesian()`:
+
+```bash
+pip install "checkmodel[bayes]"
+```
+
+```python
+import bambi as bmb
+from checkmodel import bayesian, check_model, model_performance, r2_bayes
+
+model = bmb.Model("Reaction ~ Days + (1|Subject)", sleep)
+fit = bayesian(model.fit(), model)
+
+check_model(fit)        # posterior predictive check and convergence (R-hat, ESS)
+r2_bayes(fit)           # conditional and marginal Bayesian R² with HDI
+model_performance(fit)  # ELPD, LOOIC, WAIC, R2, RMSE, Sigma
+```
+
+With bambi, `bayesian()` computes the expected values, posterior predictive
+draws and pointwise log-likelihood itself. With PyMC, add a
+`pm.Deterministic("mu", ...)` for the expected value of each observation and
+pass the model so the rest can be computed:
+
+```python
+import pymc as pm
+
+with pm.Model() as model:
+    a = pm.Normal("a", 20, 10)
+    b = pm.Normal("b", 0, 10)
+    sigma = pm.HalfNormal("sigma", 5)
+    mu = pm.Deterministic("mu", a + b * mtcars["wt"].to_numpy())
+    pm.Normal("mpg", mu, sigma, observed=mtcars["mpg"].to_numpy())
+    idata = pm.sample()
+
+fit = bayesian(idata, model)
 ```
 
 !!! tip "Singular fits"

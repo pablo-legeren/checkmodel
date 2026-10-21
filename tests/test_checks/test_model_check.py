@@ -6,10 +6,11 @@ from sklearn.linear_model import Ridge
 from checkmodel import ModelCheckReport, check_model
 
 
-def test_linear_model_runs_all_five_checks(mtcars_ols):
+def test_linear_model_runs_all_checks(mtcars_ols):
     report = check_model(*mtcars_ols)
     assert isinstance(report, ModelCheckReport)
     assert list(report) == [
+        "predictions",
         "normality",
         "heteroscedasticity",
         "collinearity",
@@ -17,12 +18,22 @@ def test_linear_model_runs_all_five_checks(mtcars_ols):
         "autocorrelation",
     ]
     assert not report.skipped
-    assert len(report) == 5
+    assert len(report) == 6
 
 
 def test_logistic_and_poisson_checks(mtcars_logit, poisson):
-    assert list(check_model(*mtcars_logit)) == ["collinearity", "outliers", "binned_residuals"]
-    assert list(check_model(poisson)) == ["collinearity", "outliers", "overdispersion"]
+    assert list(check_model(*mtcars_logit)) == [
+        "predictions",
+        "collinearity",
+        "outliers",
+        "binned_residuals",
+    ]
+    assert list(check_model(poisson)) == [
+        "predictions",
+        "collinearity",
+        "outliers",
+        "overdispersion",
+    ]
 
 
 def test_inapplicable_checks_are_skipped(fit, logit):
@@ -50,6 +61,13 @@ def test_alpha_is_forwarded(ols):
     assert check_model(ols, alpha=0.001)["normality"].passed
 
 
+def test_predictive_check_is_reproducible(ols):
+    first = check_model(ols)["predictions"]
+    assert first.to_dataframe().equals(check_model(ols)["predictions"].to_dataframe())
+    other = check_model(ols, random_state=1)["predictions"]
+    assert first.simulated.tolist() != other.simulated.tolist()
+
+
 def test_summary_and_passed(fit):
     good = check_model(fit("lm_good"))
     assert good.passed
@@ -66,18 +84,18 @@ def test_repr(fit):
     assert text.startswith("# Model checks: OLS (gaussian, identity link), n = 200")
     assert "Normality of residuals: Warning" in text
     assert "Skipped:" in text
-    assert str(check_model(fit("lm_good"))).count("OK:") == 5
+    assert str(check_model(fit("lm_good"))).count("OK:") == 6
 
 
 @pytest.mark.parametrize(
     ("name", "panels"),
     [
-        ("lm_mtcars", 6),
-        ("glm_logit", 4),
-        ("glm_pois", 4),
-        ("lm_hetero", 5),
-        ("mixed_sleep_slope", 6),
-        ("mixed_synth", 6),
+        ("lm_mtcars", 7),
+        ("glm_logit", 5),
+        ("glm_pois", 5),
+        ("lm_hetero", 6),
+        ("mixed_sleep_slope", 7),
+        ("mixed_synth", 7),
     ],
 )
 def test_plot_grid(name, panels, fit):
@@ -85,16 +103,16 @@ def test_plot_grid(name, panels, fit):
     visible = [ax for ax in fig.axes if ax.get_visible()]
     assert len(visible) == panels
     titles = [ax.get_title(loc="left").strip() for ax in visible]
-    assert titles[0] in {"Linearity", "Homogeneity of Variance"}
+    assert titles[0] == "Posterior Predictive Check"
 
 
 def test_plot_options(ols):
     fig = check_model(ols).plot(ncols=2, panel_size=(3, 2.5))
-    assert fig.get_size_inches().tolist() == [6.0, 7.5]
+    assert fig.get_size_inches().tolist() == [6.0, 10.0]
 
 
 def test_penalized_sklearn(mtcars):
     X, y = mtcars[["wt", "hp"]], mtcars["mpg"]
     report = check_model(Ridge(alpha=1.0).fit(X, y), X=X, y=y)
-    assert len(report) == 5
+    assert len(report) == 6
     report.plot()

@@ -209,6 +209,7 @@ def test_autocorrelation_not_applicable(fit):
 def test_check_model_for_mixed_models(fit):
     report = check_model(fit("mixed_sleep_slope"))
     assert list(report) == [
+        "predictions",
         "normality",
         "random_effects",
         "heteroscedasticity",

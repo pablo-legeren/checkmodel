@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
+import pandas as pd
 
+from .._bayes import BayesianModel, as_bayesian
 from .._introspection import (
     BaseAdapter,
     SklearnAdapter,
@@ -14,6 +16,7 @@ from .._introspection import (
     StatsmodelsMixedAdapter,
     as_adapter,
 )
+from .._mcmc import ess_bulk, ess_tail, rhat
 from .._types import ArrayLike, CheckNotApplicableError, Model
 from ._base import CheckResult
 
@@ -26,10 +29,65 @@ class ConvergenceResult(CheckResult):
 
     For mixed models ``statistic`` is the largest absolute relative gradient
     at the optimum; it is ``None`` when only the optimizer's flag is known.
+    For Bayesian models it is the largest R-hat, and ``table`` lists R-hat
+    and bulk/tail effective sample sizes per parameter.
     """
 
     key = "convergence"
     title = "Convergence"
+
+    table: pd.DataFrame = field(default_factory=pd.DataFrame)
+
+    def to_dataframe(self) -> pd.DataFrame:
+        """Return the per-parameter diagnostics (Bayesian models) or the summary row."""
+        return self.table.copy() if not self.table.empty else super().to_dataframe()
+
+
+RHAT_MAX = 1.01
+ESS_PER_CHAIN = 100
+
+
+def _bayesian_convergence(bayes: BayesianModel) -> ConvergenceResult:
+    rows = [
+        {
+            "Parameter": name,
+            "Rhat": rhat(draws),
+            "ESS_bulk": ess_bulk(draws),
+            "ESS_tail": ess_tail(draws),
+        }
+        for name, draws in bayes.parameters.items()
+    ]
+    if not rows:
+        raise CheckNotApplicableError("The posterior holds no scalar parameters to diagnose.")
+    table = pd.DataFrame(rows)
+    min_ess = ESS_PER_CHAIN * bayes.chains
+    bad_rhat = table[table["Rhat"] >= RHAT_MAX]
+    low_ess = table[(table["ESS_bulk"] < min_ess) | (table["ESS_tail"] < min_ess)]
+    worst = float(table["Rhat"].max())
+    problems = []
+    if not bad_rhat.empty:
+        problems.append(f"R-hat >= {RHAT_MAX} for {', '.join(bad_rhat['Parameter'])}")
+    if not low_ess.empty:
+        problems.append(f"ESS < {min_ess} for {', '.join(low_ess['Parameter'])}")
+    if problems:
+        message = (
+            f"Warning: Chains have not converged: {'; '.join(problems)}. "
+            "Run longer chains or reparameterize the model."
+        )
+    else:
+        message = (
+            f"OK: Chains converged (max R-hat = {worst:.3f}, "
+            f"min bulk ESS = {table['ESS_bulk'].min():.0f})."
+        )
+    return ConvergenceResult(
+        passed=not problems,
+        method="R-hat and effective sample size",
+        statistic=worst,
+        p_value=None,
+        message=message,
+        adapter=bayes,  # type: ignore[arg-type]
+        table=table,
+    )
 
 
 def _mixed_relative_gradient(adapter: StatsmodelsMixedAdapter) -> float | None:
@@ -69,6 +127,10 @@ def check_convergence(
     their optimizer's own report: IRLS for GLMs, the iteration limit for
     iterative scikit-learn estimators; OLS and WLS are solved exactly.
 
+    Bayesian models converge when every parameter has rank-normalized
+    R-hat below 1.01 and bulk and tail effective sample sizes of at least 100
+    per chain (Vehtari et al., 2021), computed as R's ``posterior`` package.
+
     Parameters
     ----------
     model
@@ -87,6 +149,9 @@ def check_convergence(
     statsmodels and lme4 parameterize the random effects differently, so the
     gradient value itself is not comparable with R's; the verdict is.
     """
+    bayes = as_bayesian(model)
+    if bayes is not None:
+        return _bayesian_convergence(bayes)
     adapter: BaseAdapter = as_adapter(model, X, y)
     statistic: float | None = None
     if isinstance(adapter, StatsmodelsMixedAdapter):

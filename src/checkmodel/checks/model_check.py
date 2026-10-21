@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from .._bayes import BayesianModel, as_bayesian
 from .._introspection import BaseAdapter, as_adapter
-from .._types import ArrayLike, CheckNotApplicableError, Model
+from .._types import ArrayLike, CheckNotApplicableError, Model, UnsupportedModelError
 from ._base import CheckResult
 from .autocorrelation import check_autocorrelation
 from .binned import binned_residuals
@@ -19,6 +20,7 @@ from .heteroscedasticity import check_heteroscedasticity
 from .normality import check_normality
 from .outliers import check_outliers
 from .overdispersion import check_overdispersion
+from .predictions import check_predictions
 from .singularity import check_singularity
 from .zeroinflation import check_zeroinflation
 
@@ -28,6 +30,7 @@ if TYPE_CHECKING:
 __all__ = ["ModelCheckReport", "check_model"]
 
 _CHECKS: dict[str, Callable[..., CheckResult]] = {
+    "predictions": check_predictions,
     "normality": check_normality,
     "heteroscedasticity": check_heteroscedasticity,
     "collinearity": check_collinearity,
@@ -41,6 +44,7 @@ _CHECKS: dict[str, Callable[..., CheckResult]] = {
     "zeroinflation": check_zeroinflation,
 }
 _ALPHA_CHECKS = {
+    "predictions",
     "normality",
     "heteroscedasticity",
     "autocorrelation",
@@ -49,7 +53,13 @@ _ALPHA_CHECKS = {
 }
 
 
-def _relevant_checks(adapter: BaseAdapter) -> list[str]:
+def _relevant_checks(adapter: BaseAdapter | BayesianModel) -> list[str]:
+    if isinstance(adapter, BayesianModel):
+        return ["predictions", "convergence"]
+    return ["predictions", *_frequentist_checks(adapter)]
+
+
+def _frequentist_checks(adapter: BaseAdapter) -> list[str]:
     info = adapter.info
     if info.is_mixed:
         return [
@@ -84,7 +94,7 @@ class ModelCheckReport(Mapping[str, CheckResult]):
 
     def __init__(
         self,
-        adapter: BaseAdapter,
+        adapter: BaseAdapter | BayesianModel,
         results: dict[str, CheckResult],
         skipped: dict[str, str],
     ) -> None:
@@ -153,10 +163,12 @@ def check_model(
     *,
     checks: str | Iterable[str] = "all",
     alpha: float = 0.05,
+    random_state: int | None = 0,
 ) -> ModelCheckReport:
     """Run every assumption check that applies to ``model``.
 
-    The model type decides what runs, as in ``performance::check_model()``:
+    The model type decides what runs, as in ``performance::check_model()``.
+    Every model gets a posterior predictive check first, then:
 
     * linear models: normality, heteroscedasticity, collinearity, outliers
       and autocorrelation;
@@ -164,22 +176,26 @@ def check_model(
       heteroscedasticity, collinearity, outliers, singularity and convergence;
     * logistic regression: collinearity, outliers and binned residuals;
     * Poisson regression: collinearity, outliers and overdispersion;
-    * other GLMs: collinearity and outliers.
+    * other GLMs: collinearity and outliers;
+    * Bayesian models (see :func:`checkmodel.bayesian`): convergence.
 
     Parameters
     ----------
     model
-        A fitted statsmodels or scikit-learn model.
+        A fitted statsmodels or scikit-learn model, or a Bayesian model.
     X, y
         Training data; required for scikit-learn models.
     checks
         ``"all"`` for every relevant check, or an iterable of names among
-        ``"normality"``, ``"random_effects"``, ``"heteroscedasticity"``,
+        ``"predictions"``, ``"normality"``, ``"random_effects"``, ``"heteroscedasticity"``,
         ``"collinearity"``, ``"outliers"``, ``"autocorrelation"``,
         ``"binned_residuals"``, ``"singularity"``, ``"convergence"``,
         ``"overdispersion"`` and ``"zeroinflation"``.
     alpha
         Significance level for the formal tests.
+    random_state
+        Seed for the simulations of the predictive check, so that reports are
+        reproducible; ``None`` draws a fresh seed.
 
     Returns
     -------
@@ -191,7 +207,8 @@ def check_model(
     >>> report.plot()  # doctest: +SKIP
     >>> report["normality"].p_value  # doctest: +SKIP
     """
-    adapter = as_adapter(model, X, y)
+    bayes = as_bayesian(model)
+    adapter: BaseAdapter | BayesianModel = bayes if bayes is not None else as_adapter(model, X, y)
     relevant = _relevant_checks(adapter)
     if checks == "all":
         wanted = relevant
@@ -204,8 +221,10 @@ def check_model(
     skipped: dict[str, str] = {}
     for name in wanted:
         kwargs: dict[str, Any] = {"alpha": alpha} if name in _ALPHA_CHECKS else {}
+        if name == "predictions":
+            kwargs["random_state"] = random_state
         try:
             results[name] = _CHECKS[name](adapter, **kwargs)
-        except CheckNotApplicableError as exc:
+        except (CheckNotApplicableError, UnsupportedModelError) as exc:
             skipped[name] = str(exc)
     return ModelCheckReport(adapter, results, skipped)
