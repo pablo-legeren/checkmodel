@@ -106,7 +106,9 @@ def check_collinearity(
     sd = np.sqrt(np.diag(v))
     R = v / np.outer(sd, sd)
     det_R = _det(R)
-    if not np.isfinite(det_R) or det_R <= 0:
+    # Judge rank numerically (SVD): with an exactly collinear design det(R) can
+    # still come out as a tiny positive number, depending on the BLAS.
+    if adapter.rank < adapter.n_params or np.linalg.matrix_rank(R) < R.shape[0]:
         warnings.warn("Model matrix is rank deficient. VIFs may not be sensible.", stacklevel=2)
 
     vif = np.empty(len(terms))
