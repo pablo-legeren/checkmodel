@@ -117,6 +117,10 @@ def check_collinearity(
         rest = [k for k in range(len(keep)) if k not in subs]
         with np.errstate(divide="ignore", invalid="ignore"):
             vif[i] = np.divide(_det(R[np.ix_(subs, subs)]) * _det(R[np.ix_(rest, rest)]), det_R)
+    # A VIF is at least 1. For orthogonal terms the determinants give 1 give or take
+    # an ulp depending on the BLAS, which would turn the interval below into nan or
+    # inf at random; snap that rounding to exactly 1, as R gets it.
+    vif[np.isclose(vif, 1.0, rtol=0.0, atol=1e-10) | (vif < 1.0)] = 1.0
 
     # Marcoulides, Raykov et al. (2019): interval for R² = 1 - 1/VIF on the logit scale.
     n, p = adapter.n_obs, adapter.n_params
