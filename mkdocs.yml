@@ -1,0 +1,47 @@
+site_name: checkmodel
+site_description: One-call diagnostics for statistical models, a Python port of R's performance package.
+site_url: https://pablo-legeren.github.io/checkmodel/
+repo_url: https://github.com/pablo-legeren/checkmodel
+repo_name: pablo-legeren/checkmodel
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - API reference: api-reference.md
+  - Comparison with R: comparison-with-r.md
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.sections
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: numpy
+            show_source: false
+            show_root_heading: true
+            heading_level: 3
+            members_order: source
+
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.highlight
+  - pymdownx.superfences

@@ -1,0 +1,121 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "checkmodel"
+dynamic = ["version"]
+description = "One-call diagnostics for statistical models: a Python port of R's easystats/performance."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Pablo Legerén", email = "pablolegerensomolinos@gmail.com" }]
+requires-python = ">=3.10"
+keywords = [
+    "statistics",
+    "regression",
+    "diagnostics",
+    "model-checking",
+    "statsmodels",
+    "scikit-learn",
+    "easystats",
+    "performance",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Typing :: Typed",
+]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "pandas>=1.5",
+    "statsmodels>=0.14",
+    "scikit-learn>=1.2",
+    "matplotlib>=3.6",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7", "pytest-cov>=4"]
+dev = [
+    "checkmodel[test]",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "pandas-stubs",
+    "pre-commit>=3",
+]
+docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9", "mkdocstrings[python]>=0.25"]
+
+[project.urls]
+Homepage = "https://github.com/pablo-legeren/checkmodel"
+Documentation = "https://pablo-legeren.github.io/checkmodel"
+Issues = "https://github.com/pablo-legeren/checkmodel/issues"
+Changelog = "https://github.com/pablo-legeren/checkmodel/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/checkmodel/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/checkmodel", "tests", "README.md", "LICENSE", "CHANGELOG.md"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/checkmodel"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+filterwarnings = ["error::FutureWarning:checkmodel"]
+
+[tool.coverage.run]
+source = ["checkmodel"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "@overload", "\\.\\.\\."]
+
+[tool.ruff]
+line-length = 99
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "NPY", "SIM", "RUF", "D"]
+ignore = [
+    "D105", # magic methods document themselves
+    "D107", # __init__ is documented on the class
+    "N803", # X is the conventional name for a design matrix
+    "N806",
+    "N802", # X, _wX: design-matrix properties keep their math names
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+"examples/**" = ["D"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src/checkmodel"]
+strict = true
+warn_unreachable = true
+# pandas-stubs types most DataFrame/Series results as Any
+warn_return_any = false
+disallow_any_generics = false
+
+[[tool.mypy.overrides]]
+module = ["statsmodels.*", "sklearn.*", "scipy.*", "patsy.*", "matplotlib.*"]
+ignore_missing_imports = true
