@@ -1,0 +1,21 @@
+name: Feature request
+description: Support a new model type, port another check from R, or improve the API.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What would you like checkmodel to do?
+    validations:
+      required: true
+  - type: input
+    id: r-function
+    attributes:
+      label: Equivalent in R, if any
+      description: e.g. performance::check_residuals(), performance::r2_loo()
+  - type: textarea
+    id: example
+    attributes:
+      label: Example
+      description: How you would call it, and on which kind of model.
+      render: python

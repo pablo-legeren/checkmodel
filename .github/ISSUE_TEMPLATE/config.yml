@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Comparison with R
+    url: https://github.com/pablo-legeren/checkmodel/blob/main/docs/comparison-with-r.md
+    about: Known, deliberate differences from R's performance package. Check here before reporting a mismatch.

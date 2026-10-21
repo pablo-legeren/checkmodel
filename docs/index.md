@@ -19,9 +19,10 @@ influence and binned residuals for a logistic regression.
 
 - **[Getting started](getting-started.md)**: install, check a model, read the
   results, compare models.
+- **[Supported models](supported-models.md)**: which check works on which model.
 - **[API reference](api-reference.md)**: every function and result type.
 - **[Comparison with R](comparison-with-r.md)**: function-by-function mapping
   and the few deliberate differences.
 
-All statistics are tested against R (`performance` 0.18.2, `lmtest`, `car`) to
-a tolerance of 1e-4.
+All statistics are tested against R (`performance` 0.18.2, `lme4`, `lmtest`,
+`car`, `rstanarm`, `loo` and `posterior`) to a tolerance of 1e-4.

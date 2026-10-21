@@ -7,6 +7,7 @@ repo_name: pablo-legeren/checkmodel
 nav:
   - Home: index.md
   - Getting started: getting-started.md
+  - Supported models: supported-models.md
   - API reference: api-reference.md
   - Comparison with R: comparison-with-r.md
 

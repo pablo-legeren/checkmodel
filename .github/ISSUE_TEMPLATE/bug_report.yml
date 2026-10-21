@@ -1,0 +1,34 @@
+name: Bug report
+description: A check or metric gives a wrong result, fails, or crashes.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you run, what did you expect, and what did you get instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal example
+      description: Self-contained code that reproduces the problem, ideally on a public dataset.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: r-comparison
+    attributes:
+      label: What does R give?
+      description: >-
+        If the numbers differ from R's `performance`, paste the R code and output.
+        checkmodel aims to match R, so this is the fastest way to a fix.
+      render: r
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: "Output of: python -c \"import checkmodel, statsmodels, sklearn, numpy; print(checkmodel.__version__, statsmodels.__version__, sklearn.__version__, numpy.__version__)\""
+    validations:
+      required: true
