@@ -94,10 +94,13 @@ positions for unlabelled data.
 `performance::check_heteroscedasticity()` takes the residual standard
 deviation from `insight::get_deviance()`, which for these models is a
 likelihood deviance (about 1794 for `sleepstudy`) rather than the residual sum
-of squares (about 155 697). The residual SD it uses is therefore far too small
-and the test returns p ≈ 0 regardless of the data. `checkmodel` uses the
-model's sigma instead, which is what the function does for `lm` fits. The test
-suite checks the result against that computation done in R.
+of squares (about 155 697). That deviance does not scale with the response, so
+the result depends on its units: for `sleepstudy` (sigma ≈ 31) the test uses a
+residual SD of 3.2 and returns p ≈ 0, and multiplying any response by 100 can
+turn a clean p = 0.77 into p < .001. `checkmodel` uses the model's sigma
+instead, which is what the function effectively does for `lm` fits; the result
+is then the same in any units. The test suite checks it against that
+computation done in R.
 
 **Optimizers and singular fits.** lme4 reaches a zero variance exactly when
 the data call for it. statsmodels' default optimizer (BFGS) can stop just short
