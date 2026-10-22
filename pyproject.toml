@@ -58,7 +58,7 @@ dev = [
     "pandas-stubs",
     "pre-commit>=3",
 ]
-docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9", "mkdocstrings[python]>=0.25"]
+docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9", "mkdocstrings[python]>=0.25", "mkdocs-jupyter>=0.27"]
 
 [project.urls]
 Homepage = "https://github.com/pablo-legeren/checkmodel"

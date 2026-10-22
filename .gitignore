@@ -14,3 +14,4 @@ htmlcov/
 site/
 .ipynb_checkpoints/
 .Rhistory
+.cache/
