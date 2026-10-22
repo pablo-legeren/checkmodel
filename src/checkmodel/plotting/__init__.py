@@ -17,6 +17,7 @@ from .diagnostic_plots import (
     plot_qq,
     plot_random_effects,
     plot_random_effects_term,
+    plot_uniformity,
     plot_zeroinflation,
 )
 
@@ -37,5 +38,6 @@ __all__ = [
     "plot_qq",
     "plot_random_effects",
     "plot_random_effects_term",
+    "plot_uniformity",
     "plot_zeroinflation",
 ]

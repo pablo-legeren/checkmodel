@@ -14,6 +14,7 @@ suppressPackageStartupMessages({
   library(lmtest)
   library(jsonlite)
   library(lme4)
+  library(MASS)
 })
 
 out_dir <- file.path("tests", "r_reference")
@@ -105,6 +106,7 @@ synthetic <- list(
 )
 
 # ------------------------------------------------------------------ models
+tight <- glm.control(epsilon = 1e-14, maxit = 100)
 models <- list(
   lm_mtcars = lm(mpg ~ wt + hp, data = mtcars),
   lm_mtcars_cyl = lm(mpg ~ wt + hp + factor(cyl), data = mtcars),
@@ -122,7 +124,17 @@ models <- list(
   glm_logit_synth = glm(y ~ x + z, family = binomial, data = synthetic$logit),
   glm_pois = glm(breaks ~ wool + tension, family = poisson, data = warpbreaks),
   glm_pois_bio = glm(art ~ fem + mar + kid5 + phd + ment, family = poisson, data = bioChemists),
-  glm_pois_synth = glm(y ~ x, family = poisson, data = synthetic$pois)
+  glm_pois_synth = glm(y ~ x, family = poisson, data = synthetic$pois),
+  glm_negbin = glm.nb(art ~ fem + mar + kid5 + phd + ment, data = bioChemists),
+  # Non-canonical links: R's default IRLS stopping rule (relative deviance change
+  # < 1e-8) leaves the estimates short of the optimum by ~1e-5, so converge fully.
+  glm_probit = glm(vs ~ mpg + wt, family = binomial(link = "probit"), data = mtcars,
+                   control = tight),
+  glm_cloglog = glm(vs ~ mpg + wt, family = binomial(link = "cloglog"), data = mtcars,
+                    control = tight),
+  glm_gamma = glm(mpg ~ wt + hp, family = Gamma(link = "log"), data = mtcars, control = tight),
+  glm_invgauss = glm(mpg ~ wt + hp, family = inverse.gaussian(link = "log"), data = mtcars,
+                     control = tight)
 )
 
 safe <- function(expr) tryCatch(expr, error = function(e) NULL)
@@ -211,6 +223,9 @@ describe <- function(m) {
   }
   if (isTRUE(info$is_count)) {
     ref$pseudo_r2 <- list(nagelkerke = num(r2_nagelkerke(m)), coxsnell = num(r2_coxsnell(m)))
+  }
+  # Negative binomial models use simulated residuals in R: random, so not referenced.
+  if (isTRUE(info$is_count) && !isTRUE(info$is_negbin)) {
     od <- check_overdispersion(m)
     ref$overdispersion <- list(
       chisq = od$chisq_statistic, ratio = od$dispersion_ratio,

@@ -28,6 +28,14 @@
 
 ::: checkmodel.check_predictions
 
+::: checkmodel.check_residuals
+
+## Simulated residuals
+
+::: checkmodel.simulate_residuals
+
+::: checkmodel.SimulatedResiduals
+
 ## Result types
 
 ::: checkmodel.CheckResult
@@ -55,6 +63,8 @@
 ::: checkmodel.ConvergenceResult
 
 ::: checkmodel.PredictionsResult
+
+::: checkmodel.ResidualsResult
 
 ## Performance metrics
 
@@ -105,6 +115,8 @@
 ## Plotting
 
 ::: checkmodel.plotting.plot_model_check
+
+::: checkmodel.plotting.plot_uniformity
 
 ## Extending checkmodel
 

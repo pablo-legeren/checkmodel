@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from .._bayes import BayesianModel, as_bayesian
-from .._introspection import BaseAdapter, StatsmodelsMixedAdapter, as_adapter
+from .._introspection import as_adapter
 from .._types import ArrayLike, CheckNotApplicableError, FloatArray, Model
 from ._base import CheckResult, format_p
 
@@ -45,34 +45,6 @@ class PredictionsResult(CheckResult):
     def to_dataframe(self) -> pd.DataFrame:
         """Return one row per test statistic."""
         return self.table.copy()
-
-
-def _simulate(adapter: BaseAdapter, n_sim: int, rng: np.random.Generator) -> FloatArray:
-    """Draw new responses from a fitted frequentist model, as R's ``simulate()``."""
-    info, mu, n = adapter.info, adapter.mu, adapter.n_obs
-    if isinstance(adapter, StatsmodelsMixedAdapter):
-        # simulate.merMod(re.form = NA): new group effects, new residuals.
-        result = adapter.model
-        fixed = adapter.X @ np.asarray(result.fe_params, dtype=float)
-        out = np.empty((n_sim, n))
-        chol = np.linalg.cholesky(adapter.cov_re + 1e-12 * np.eye(len(adapter.cov_re)))
-        for s in range(n_sim):
-            values = fixed + rng.normal(scale=adapter.sigma, size=n)
-            for rows in result.model.row_indices.values():
-                u = chol @ rng.standard_normal(chol.shape[0])
-                values[rows] += adapter.Z[rows] @ u
-            out[s] = values
-        return out
-    if info.is_linear:
-        scale = adapter.sigma / np.sqrt(adapter.weights)
-        return mu + rng.normal(size=(n_sim, n)) * scale
-    if info.is_bernoulli:
-        return rng.binomial(1, np.clip(mu, 0.0, 1.0), size=(n_sim, n)).astype(float)
-    if info.family == "poisson":
-        return rng.poisson(mu, size=(n_sim, n)).astype(float)
-    raise CheckNotApplicableError(
-        f"Simulating new data is not implemented for family={info.family!r}."
-    )
 
 
 def _statistics(discrete: bool, binary: bool) -> dict[str, Any]:
@@ -141,7 +113,7 @@ def check_predictions(
     else:
         adapter = as_adapter(model, X, y)
         observed = adapter.y
-        everything = shown = _simulate(adapter, iterations, rng)
+        everything = shown = adapter.simulate(iterations, rng)
         method = "Simulation-based predictive p-values"
 
     binary = bool(np.all(np.isin(observed, (0.0, 1.0))))

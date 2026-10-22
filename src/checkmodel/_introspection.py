@@ -27,6 +27,7 @@ from scipy import special, stats
 
 from ._types import (
     ArrayLike,
+    CheckNotApplicableError,
     FloatArray,
     Model,
     ModelAdapter,
@@ -186,14 +187,55 @@ class BaseAdapter(ABC):
         info, mu, w = self.info, self.mu, self.weights
         if info.is_linear:
             return w
-        if info.family == "binomial" and info.link == "logit":
-            return w * mu * (1.0 - mu)
-        if info.family == "poisson" and info.link == "log":
-            return w * mu
-        raise UnsupportedModelError(
-            f"Cannot derive working weights for family={info.family!r}, link={info.link!r}; "
-            "the adapter must override `working_weights` or `hat`."
-        )
+        if info.is_binomial:
+            # As binomial()$mu.eta in R: keep fitted probabilities of separated fits
+            # off the boundary, where d mu / d eta and the variance are both 0.
+            eps = np.finfo(float).eps
+            mu = np.clip(mu, eps, 1.0 - eps)
+        try:
+            num, var = w * self._dmu_deta(mu) ** 2, self._variance(mu)
+        except UnsupportedModelError:
+            raise UnsupportedModelError(
+                f"Cannot derive working weights for family={info.family!r}, "
+                f"link={info.link!r}; the adapter must override `working_weights` or `hat`."
+            ) from None
+        return np.divide(num, var, out=np.zeros_like(num), where=var > 0)
+
+    def _linkinv(self, eta: FloatArray) -> FloatArray:
+        link = self.info.link
+        if link == "identity":
+            return eta
+        if link == "logit":
+            return np.asarray(special.expit(eta))
+        if link == "probit":
+            return np.asarray(stats.norm.cdf(eta))
+        if link == "cloglog":
+            return -np.expm1(-np.exp(eta))
+        if link == "log":
+            return np.exp(eta)
+        if link == "inverse":
+            return 1.0 / eta
+        if link == "sqrt":
+            return eta**2
+        raise UnsupportedModelError(f"Unknown link function {link!r}.")
+
+    def _dmu_deta(self, mu: FloatArray) -> FloatArray:
+        link = self.info.link
+        if link == "identity":
+            return np.ones_like(mu)
+        if link == "logit":
+            return mu * (1.0 - mu)
+        if link == "probit":
+            return np.asarray(stats.norm.pdf(stats.norm.ppf(mu)))
+        if link == "cloglog":
+            return -(1.0 - mu) * np.log1p(-mu)
+        if link == "log":
+            return mu
+        if link == "inverse":
+            return -(mu**2)
+        if link == "sqrt":
+            return 2.0 * np.sqrt(mu)
+        raise UnsupportedModelError(f"Unknown link function {link!r}.")
 
     def _variance(self, mu: FloatArray) -> FloatArray:
         fam = self.info.family
@@ -203,7 +245,33 @@ class BaseAdapter(ABC):
             return mu * (1.0 - mu)
         if fam == "poisson":
             return mu
+        if fam == "negbin":
+            return mu + mu**2 / self.negbin_theta
+        if fam == "gamma":
+            return mu**2
+        if fam == "inverse.gaussian":
+            return mu**3
         raise UnsupportedModelError(f"No variance function for family={fam!r}.")
+
+    def _unit_deviance(self, mu: FloatArray) -> FloatArray:
+        fam, y = self.info.family, self.y
+        if fam == "gaussian":
+            return (y - mu) ** 2
+        if fam == "binomial":
+            unit = -2.0 * (special.xlogy(y, mu) + special.xlogy(1.0 - y, 1.0 - mu))
+            return unit + 2.0 * (special.xlogy(y, y) + special.xlogy(1.0 - y, 1.0 - y))
+        if fam == "poisson":
+            return 2.0 * (special.xlogy(y, y / mu) - (y - mu))
+        if fam == "negbin":
+            theta = self.negbin_theta
+            return 2.0 * (
+                special.xlogy(y, y / mu) - (y + theta) * np.log((y + theta) / (mu + theta))
+            )
+        if fam == "gamma":
+            return 2.0 * (-np.log(y / mu) + (y - mu) / mu)
+        if fam == "inverse.gaussian":
+            return (y - mu) ** 2 / (y * mu**2)
+        raise UnsupportedModelError(f"No deviance for family={fam!r}.")
 
     @cached_property
     def _wX(self) -> FloatArray:
@@ -218,22 +286,15 @@ class BaseAdapter(ABC):
     @cached_property
     def deviance_residuals(self) -> FloatArray:
         """Deviance residuals (equal to Pearson residuals for Gaussian models)."""
-        fam, y, mu, w = self.info.family, self.y, self.mu, self.weights
-        if fam == "gaussian":
+        if self.info.family == "gaussian":
             return self.pearson_residuals
-        if fam == "binomial":
-            unit = -2.0 * (special.xlogy(y, mu) + special.xlogy(1.0 - y, 1.0 - mu))
-            unit = unit + 2.0 * (special.xlogy(y, y) + special.xlogy(1.0 - y, 1.0 - y))
-        elif fam == "poisson":
-            unit = 2.0 * (special.xlogy(y, y / mu) - (y - mu))
-        else:
-            raise UnsupportedModelError(f"No deviance residuals for family={fam!r}.")
-        return np.sign(y - mu) * np.sqrt(np.clip(w * unit, 0.0, None))
+        unit = self._unit_deviance(self.mu)
+        return np.sign(self.y - self.mu) * np.sqrt(np.clip(self.weights * unit, 0.0, None))
 
     @cached_property
     def scale(self) -> float:
-        """Dispersion: 1 for binomial/Poisson, Pearson chi² / df otherwise."""
-        if self.info.family in {"binomial", "poisson"}:
+        """Dispersion: 1 for binomial and count models, Pearson chi² / df otherwise."""
+        if self.info.family in {"binomial", "poisson", "negbin"}:
             return 1.0
         return float(np.sum(self.pearson_residuals**2) / self.df_resid)
 
@@ -246,8 +307,17 @@ class BaseAdapter(ABC):
     @cached_property
     def hat(self) -> FloatArray:
         """Leverage: diagonal of the (weighted) hat matrix."""
-        U, s, _ = np.linalg.svd(self._wX, full_matrices=False)
-        keep = s > s.max() * max(self._wX.shape) * np.finfo(float).eps
+        wX = self._wX
+        try:
+            U, s, _ = np.linalg.svd(wX, full_matrices=False)
+        except np.linalg.LinAlgError:  # LAPACK's SVD occasionally fails to converge
+            from scipy import linalg
+
+            Q, R, _ = linalg.qr(wX, mode="economic", pivoting=True)
+            d = np.abs(np.diag(R))
+            rank = int(np.sum(d > d.max() * max(wX.shape) * np.finfo(float).eps))
+            return np.asarray(np.sum(Q[:, :rank] ** 2, axis=1))
+        keep = s > s.max() * max(wX.shape) * np.finfo(float).eps
         return np.asarray(np.sum(U[:, keep] ** 2, axis=1))
 
     @cached_property
@@ -292,6 +362,18 @@ class BaseAdapter(ABC):
             return float(np.sum(w * (special.xlogy(y, mu) + special.xlogy(1.0 - y, 1.0 - mu))))
         if info.family == "poisson":
             return float(np.sum(w * stats.poisson.logpmf(np.round(y), mu)))
+        if info.family == "negbin":
+            theta = self.negbin_theta
+            return float(np.sum(w * stats.nbinom.logpmf(np.round(y), theta, theta / (theta + mu))))
+        if info.family == "gamma":
+            # Gamma()$aic in R: the dispersion is estimated as deviance / sum(w).
+            disp = self._deviance_at(mu) / np.sum(w)
+            return float(np.sum(w * stats.gamma.logpdf(y, 1.0 / disp, scale=mu * disp)))
+        if info.family == "inverse.gaussian":
+            disp = self._deviance_at(mu) / np.sum(w)
+            return float(
+                -0.5 * (np.sum(w) * (np.log(disp * 2 * np.pi) + 1) + 3 * np.sum(np.log(y) * w))
+            )
         return None
 
     @cached_property
@@ -312,9 +394,7 @@ class BaseAdapter(ABC):
     def _null_mu(self) -> FloatArray:
         if self.has_intercept:
             return np.full(self.n_obs, np.average(self.y, weights=self.weights))
-        link = self.info.link
-        value = {"logit": 0.5, "log": 1.0}.get(link, 0.0)
-        return np.full(self.n_obs, value)
+        return np.asarray(self._linkinv(np.zeros(self.n_obs)), dtype=float)
 
     @cached_property
     def loglik_null(self) -> float | None:
@@ -322,17 +402,7 @@ class BaseAdapter(ABC):
         return self._loglik_at(self._null_mu)
 
     def _deviance_at(self, mu: FloatArray) -> float:
-        fam, y, w = self.info.family, self.y, self.weights
-        if fam == "gaussian":
-            return float(np.sum(w * (y - mu) ** 2))
-        if fam == "binomial":
-            unit = -2.0 * (special.xlogy(y, mu) + special.xlogy(1.0 - y, 1.0 - mu))
-            unit = unit + 2.0 * (special.xlogy(y, y) + special.xlogy(1.0 - y, 1.0 - y))
-        elif fam == "poisson":
-            unit = 2.0 * (special.xlogy(y, y / mu) - (y - mu))
-        else:
-            raise UnsupportedModelError(f"No deviance for family={fam!r}.")
-        return float(np.sum(w * unit))
+        return float(np.sum(self.weights * self._unit_deviance(mu)))
 
     @cached_property
     def deviance(self) -> float:
@@ -343,6 +413,95 @@ class BaseAdapter(ABC):
     def null_deviance(self) -> float:
         """Deviance of the intercept-only model."""
         return self._deviance_at(self._null_mu)
+
+    # ------------------------------------------------------------- simulation
+    @property
+    def simulation_weights(self) -> FloatArray:
+        """Weights that scale each observation's variance (R's prior weights)."""
+        return self.weights
+
+    @property
+    def frequency_weights(self) -> FloatArray:
+        """How many identical observations each row stands for."""
+        return np.ones(self.n_obs)
+
+    @cached_property
+    def binomial_trials(self) -> FloatArray:
+        """Number of trials per observation of a binomial model (R's prior weights)."""
+        trials = self.simulation_weights
+        if np.any(trials % 1 != 0):
+            raise CheckNotApplicableError(
+                "Cannot simulate from a binomial model with non-integer prior weights."
+            )
+        return trials
+
+    @property
+    def negbin_theta(self) -> float:
+        """Shape ``theta`` of a negative binomial model, with variance ``mu + mu^2/theta``."""
+        raise CheckNotApplicableError(
+            "The adapter does not expose the negative binomial dispersion (`negbin_theta`)."
+        )
+
+    @cached_property
+    def gamma_shape(self) -> float:
+        """Maximum-likelihood shape of a Gamma model, as ``MASS::gamma.shape()``."""
+        y, A, u, f = self.y, self.simulation_weights, self.mu, self.frequency_weights
+        dbar = self.deviance / self.df_resid
+        alpha = (6.0 + 2.0 * dbar) / (dbar * (6.0 + dbar))
+        fixed = -y / u - np.log(u) + np.log(A) + 1.0 + np.log(y + (y == 0))
+        eps_max = np.finfo(float).eps ** 0.25
+        for _ in range(10):  # MASS's it.lim
+            score = np.sum(f * A * (fixed + np.log(alpha) - special.digamma(A * alpha)))
+            info = np.sum(f * A * (A * special.polygamma(1, A * alpha) - 1.0 / alpha))
+            eps = score / info
+            alpha += eps
+            if abs(eps) <= eps_max:
+                break
+        return float(alpha)
+
+    def simulate(self, n_sim: int, rng: np.random.Generator) -> FloatArray:
+        """Draw new responses from the fitted model, as R's ``simulate()``.
+
+        Parameters are held at their estimates. Binomial responses are drawn
+        as proportions of ``binomial_trials``; Gamma models use the
+        maximum-likelihood shape and inverse Gaussian models the Pearson
+        dispersion, as R does.
+
+        Parameters
+        ----------
+        n_sim
+            Number of replicated datasets.
+        rng
+            Random number generator.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(n_sim, n_obs)``: one replicated response per row.
+        """
+        fam, mu, size = self.info.family, self.mu, (n_sim, self.n_obs)
+        w = self.simulation_weights
+        if fam == "gaussian":
+            with np.errstate(divide="ignore"):
+                sd = np.sqrt(self.scale / w)
+            return mu + rng.standard_normal(size) * sd
+        if fam == "binomial":
+            trials = self.binomial_trials
+            draws = rng.binomial(trials.astype(np.int64), np.clip(mu, 0.0, 1.0), size=size)
+            return np.asarray(draws / trials, dtype=float)
+        if fam == "poisson":
+            return rng.poisson(mu, size=size).astype(float)
+        if fam == "negbin":
+            theta = self.negbin_theta
+            return rng.negative_binomial(theta, theta / (theta + mu), size=size).astype(float)
+        if fam == "gamma":
+            shape = self.gamma_shape * w
+            return rng.gamma(shape, mu / shape, size=size)
+        if fam == "inverse.gaussian":
+            return rng.wald(mu, w / self.scale, size=size)
+        raise CheckNotApplicableError(
+            f"Simulating new responses is not implemented for family={fam!r}."
+        )
 
 
 # --------------------------------------------------------------------------- utils
@@ -542,10 +701,6 @@ class StatsmodelsGLMAdapter(_StatsmodelsMixin, BaseAdapter):
         return None if np.all(w == 1.0) else w
 
     @cached_property
-    def _influence(self) -> Any:
-        return self.model.get_influence()
-
-    @cached_property
     def working_weights(self) -> FloatArray:
         mu = self.mu
         family = self._sm.family
@@ -566,7 +721,9 @@ class StatsmodelsGLMAdapter(_StatsmodelsMixin, BaseAdapter):
 
     @cached_property
     def hat(self) -> FloatArray:
-        return np.asarray(self._influence.hat_matrix_diag, dtype=float)
+        # Fisher (IRLS) weights, as R's hatvalues(); statsmodels' default uses the
+        # observed information, which differs for non-canonical links.
+        return np.asarray(self.model.get_hat_matrix_diag(observed=False), dtype=float)
 
     @cached_property
     def vcov_unscaled(self) -> FloatArray:
@@ -574,10 +731,16 @@ class StatsmodelsGLMAdapter(_StatsmodelsMixin, BaseAdapter):
 
     @cached_property
     def loglik(self) -> float | None:
+        if self.info.family in ("gamma", "inverse.gaussian"):
+            # R's likelihood (Gamma()$aic) estimates the dispersion as deviance / n;
+            # statsmodels uses the Pearson dispersion.
+            return self._loglik_at(self.mu)
         return float(self.model.llf)
 
     @cached_property
     def loglik_null(self) -> float | None:
+        if self.info.family in ("gamma", "inverse.gaussian"):
+            return self._loglik_at(np.asarray(self.model.null, dtype=float))
         return float(self.model.llnull)
 
     @cached_property
@@ -587,6 +750,31 @@ class StatsmodelsGLMAdapter(_StatsmodelsMixin, BaseAdapter):
     @cached_property
     def null_deviance(self) -> float:
         return float(self.model.null_deviance)
+
+    @property
+    def simulation_weights(self) -> FloatArray:
+        # statsmodels' var_weights are R's prior weights; freq_weights replicate rows.
+        return np.broadcast_to(np.asarray(self._sm.var_weights, dtype=float), (self.n_obs,)).copy()
+
+    @property
+    def frequency_weights(self) -> FloatArray:
+        return np.broadcast_to(
+            np.asarray(self._sm.freq_weights, dtype=float), (self.n_obs,)
+        ).copy()
+
+    @cached_property
+    def binomial_trials(self) -> FloatArray:
+        n_trials = np.asarray(getattr(self._sm, "n_trials", 1.0), dtype=float)
+        trials = np.broadcast_to(n_trials, (self.n_obs,)) * self.simulation_weights
+        if np.any(trials % 1 != 0):
+            raise CheckNotApplicableError(
+                "Cannot simulate from a binomial model with non-integer prior weights."
+            )
+        return trials
+
+    @property
+    def negbin_theta(self) -> float:
+        return 1.0 / float(self._sm.family.alpha)
 
 
 class StatsmodelsMixedAdapter(_StatsmodelsMixin, BaseAdapter):
@@ -728,6 +916,112 @@ class StatsmodelsMixedAdapter(_StatsmodelsMixin, BaseAdapter):
     def loglik_null(self) -> float | None:
         return None
 
+    def simulate(self, n_sim: int, rng: np.random.Generator) -> FloatArray:
+        # simulate.merMod(re.form = NA), as DHARMa does: new group effects, new residuals.
+        fixed = self.X @ np.asarray(self.model.fe_params, dtype=float)
+        chol = np.linalg.cholesky(self.cov_re + 1e-12 * np.eye(len(self.cov_re)))
+        out = np.empty((n_sim, self.n_obs))
+        for s in range(n_sim):
+            values = fixed + rng.normal(scale=self.sigma, size=self.n_obs)
+            for rows in self._sm.row_indices.values():
+                values[rows] += self.Z[rows] @ (chol @ rng.standard_normal(chol.shape[0]))
+            out[s] = values
+        return out
+
+
+# ----------------------------------------------------- statsmodels discrete models
+_SM_DISCRETE = {
+    "Logit": ("binomial", "logit"),
+    "Probit": ("binomial", "probit"),
+    "Poisson": ("poisson", "log"),
+    "NegativeBinomial": ("negbin", "log"),
+}
+
+
+class StatsmodelsDiscreteAdapter(_StatsmodelsMixin, BaseAdapter):
+    """Adapter for statsmodels ``Logit``, ``Probit``, ``Poisson`` and ``NegativeBinomial``.
+
+    These are the maximum-likelihood counterparts of the GLMs, so leverage,
+    residuals and deviances follow ``glm()`` in R; a negative binomial (NB2)
+    fit is treated like ``MASS::glm.nb()``: a GLM with ``theta = 1 / alpha``.
+    Offsets and exposure are honoured.
+    """
+
+    def __init__(self, model: Model) -> None:
+        super().__init__(model)
+        method = getattr(self._sm, "loglike_method", "nb2")
+        if type(self._sm).__name__ == "NegativeBinomial" and method not in ("nb2", "geometric"):
+            raise UnsupportedModelError(
+                f"Negative binomial models with loglike_method={method!r} are not supported; "
+                "use 'nb2' (the variance mu + alpha * mu^2 of R's glm.nb) or 'geometric'."
+            )
+
+    def model_type(self) -> ModelType:
+        name = type(self._sm).__name__
+        family, link = _SM_DISCRETE[name]
+        endog = np.asarray(self._sm.endog, dtype=float)
+        return ModelType(
+            family=family,
+            link=link,
+            backend="statsmodels",
+            model_class=name,
+            is_bernoulli=family == "binomial" and bool(np.all((endog == 0) | (endog == 1))),
+        )
+
+    def get_response(self) -> FloatArray:
+        return np.asarray(self._sm.endog, dtype=float)
+
+    def get_fitted(self) -> FloatArray:
+        # `fittedvalues` is the linear predictor for these models; predict() gives the mean.
+        return np.asarray(self.model.predict(), dtype=float)
+
+    @property
+    def negbin_theta(self) -> float:
+        if getattr(self._sm, "loglike_method", "nb2") == "geometric":
+            return 1.0
+        return 1.0 / float(np.asarray(self.model.params)[-1])
+
+    @cached_property
+    def loglik(self) -> float | None:
+        return float(self.model.llf)
+
+    @cached_property
+    def loglik_null(self) -> float | None:
+        return float(self.model.llnull)
+
+    @property
+    def loglik_df(self) -> int:
+        # Coefficients plus the estimated alpha of a negative binomial model.
+        return self.rank + int(getattr(self._sm, "k_extra", 0))
+
+    def _offset(self) -> FloatArray:
+        total = np.zeros(self.n_obs)
+        for name in ("offset", "exposure"):  # statsmodels keeps log(exposure)
+            value = getattr(self._sm, name, None)
+            if value is not None:
+                total = total + np.asarray(value, dtype=float)
+        return total
+
+    @cached_property
+    def _null_mu(self) -> FloatArray:
+        offset = self._offset()
+        if not np.any(offset):
+            return super()._null_mu
+        if not self.has_intercept:
+            return np.asarray(self._linkinv(offset), dtype=float)
+        # The intercept-only GLM with the same offset, as R's null deviance.
+        import statsmodels.api as sm
+
+        links = sm.families.links
+        family = {
+            "logit": lambda: sm.families.Binomial(links.Logit()),
+            "probit": lambda: sm.families.Binomial(links.Probit()),
+            "poisson": lambda: sm.families.Poisson(),
+            "negbin": lambda: sm.families.NegativeBinomial(alpha=1.0 / self.negbin_theta),
+        }[self.info.link if self.info.is_binomial else self.info.family]()
+        null = sm.GLM(self.y, np.ones((self.n_obs, 1)), family=family, offset=offset).fit()
+        return np.asarray(null.mu, dtype=float)
+
 
 # ------------------------------------------------------------------ scikit-learn
 _SKLEARN_PENALIZED = {
@@ -743,6 +1037,7 @@ _SKLEARN_PENALIZED = {
 }
 _SKLEARN_LINEAR = {"LinearRegression"} | _SKLEARN_PENALIZED
 _SKLEARN_LOGISTIC = {"LogisticRegression", "LogisticRegressionCV"}
+_SKLEARN_GLM = {"PoissonRegressor": "poisson", "GammaRegressor": "gamma"}
 
 
 def _sklearn_logistic_is_penalized(model: Any) -> bool:
@@ -816,6 +1111,14 @@ class SklearnAdapter(BaseAdapter):
                 is_bernoulli=True,
                 is_penalized=_sklearn_logistic_is_penalized(self.model),
             )
+        if name in _SKLEARN_GLM:
+            return ModelType(
+                family=_SKLEARN_GLM[name],
+                link="log",
+                backend="sklearn",
+                model_class=name,
+                is_penalized=float(getattr(self.model, "alpha", 1.0)) > 0,
+            )
         return ModelType(
             family="gaussian",
             link="identity",
@@ -856,7 +1159,7 @@ class ProtocolAdapter(BaseAdapter):
     used when the wrapped object defines them.
     """
 
-    _HOOKS = ("column_names", "intercept_index", "terms", "prior_weights", "index")
+    _HOOKS = ("column_names", "intercept_index", "terms", "prior_weights", "index", "simulate")
 
     def model_type(self) -> ModelType:
         return cast(ModelType, self.model.model_type())
@@ -926,13 +1229,19 @@ def _statsmodels_adapter(model: Any) -> BaseAdapter:
         return StatsmodelsGLMAdapter(model)
     if isinstance(inner, MixedLM):
         return StatsmodelsMixedAdapter(model)
+    if type(inner).__name__ in _SM_DISCRETE and type(inner).__module__.startswith(
+        "statsmodels.discrete"
+    ):
+        if "L1" in type(model).__name__ or "Regularized" in type(model).__name__:
+            raise UnsupportedModelError("Regularized statsmodels fits are not supported yet.")
+        return StatsmodelsDiscreteAdapter(model)
     if type(inner).__name__ in {"OLS", "WLS"} and hasattr(model, "fittedvalues"):
         if "Regularized" in type(model).__name__:
             raise UnsupportedModelError("Regularized statsmodels fits are not supported yet.")
         return StatsmodelsLinearAdapter(model)
     raise UnsupportedModelError(
         f"statsmodels `{type(inner).__name__}` models are not supported yet. "
-        "Supported: OLS, WLS, GLM and MixedLM results."
+        "Supported: OLS, WLS, GLM, MixedLM, Logit, Probit, Poisson and NegativeBinomial results."
     )
 
 
@@ -971,10 +1280,11 @@ def as_adapter(
         return _statsmodels_adapter(model)
     if module.startswith("sklearn"):
         name = type(model).__name__
-        if name not in _SKLEARN_LINEAR | _SKLEARN_LOGISTIC:
+        supported = _SKLEARN_LINEAR | _SKLEARN_LOGISTIC | set(_SKLEARN_GLM)
+        if name not in supported:
             raise UnsupportedModelError(
                 f"scikit-learn `{name}` is not supported. Supported estimators: "
-                + ", ".join(sorted(_SKLEARN_LINEAR | _SKLEARN_LOGISTIC))
+                + ", ".join(sorted(supported))
                 + ". For a Pipeline, pass its final estimator and the transformed X."
             )
         return SklearnAdapter(model, X, y)
@@ -989,6 +1299,6 @@ def as_adapter(
             "compare_performance(); the residual-based checks need a frequentist fit."
         )
     raise UnsupportedModelError(
-        f"Don't know how to read a `{type(model).__name__}`. Pass a statsmodels OLS/WLS/GLM "
-        "result, a scikit-learn linear model, or an object implementing `ModelAdapter`."
+        f"Don't know how to read a `{type(model).__name__}`. Pass a fitted statsmodels or "
+        "scikit-learn model, or an object implementing `ModelAdapter`."
     )

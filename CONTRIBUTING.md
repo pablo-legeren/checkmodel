@@ -64,9 +64,13 @@ check_model(MyModelAdapter(fitted_model))
 ```
 
 Leverage, standardized residuals, Cook's distance, VIFs and likelihoods are
-derived from these for Gaussian, binomial (logit) and Poisson (log) models.
+derived from these for Gaussian, binomial, Poisson, negative binomial (expose
+`negbin_theta`), Gamma and inverse Gaussian models with identity, logit,
+probit, cloglog, log, inverse or sqrt links.
 Optional methods `column_names()`, `prior_weights()` and `index()` improve the
-output when defined.
+output when defined. `simulate(n_sim, rng)`, returning an `(n_sim, n_obs)`
+array of new responses, lets simulation-based checks (`check_predictions()`,
+`simulate_residuals()`) work for families `checkmodel` cannot simulate itself.
 
 To make `check_model(fitted_model)` work directly, subclass `BaseAdapter`
 and register it:

@@ -87,6 +87,10 @@ def _scoring_rules(adapter: BaseAdapter) -> tuple[float, float] | None:
         p_y = stats.binom.pmf(np.round(y), round(float(y.sum())), mu)
     elif info.family == "poisson":
         p_y = stats.poisson.pmf(np.round(y), mu)
+    elif info.family == "negbin":
+        # performance_score() uses exp(Pearson chi-squared / df) as the size, not theta.
+        size = float(np.exp(np.sum(adapter.pearson_residuals**2) / adapter.df_resid))
+        p_y = stats.nbinom.pmf(np.round(y), size, size / (size + mu))
     else:
         return None
     with np.errstate(divide="ignore"):  # p_y can underflow to 0; R then reports -Inf too

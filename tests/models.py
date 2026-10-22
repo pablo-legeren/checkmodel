@@ -83,6 +83,22 @@ MODELS: dict[str, Callable[[], Any]] = {
     "glm_pois_synth": lambda: smf.glm(
         "y ~ x", dataset("pois"), family=sm.families.Poisson()
     ).fit(),
+    # MASS::glm.nb() estimates theta by maximum likelihood, like statsmodels' NB2.
+    "glm_negbin": lambda: smf.negativebinomial(
+        "art ~ fem + mar + kid5 + phd + ment", biochemists()
+    ).fit(disp=0, method="newton", tol=1e-12, maxiter=200),
+    "glm_probit": lambda: smf.glm(
+        "vs ~ mpg + wt", mtcars(), family=sm.families.Binomial(sm.families.links.Probit())
+    ).fit(tol=1e-14),
+    "glm_cloglog": lambda: smf.glm(
+        "vs ~ mpg + wt", mtcars(), family=sm.families.Binomial(sm.families.links.CLogLog())
+    ).fit(tol=1e-14),
+    "glm_gamma": lambda: smf.glm(
+        "mpg ~ wt + hp", mtcars(), family=sm.families.Gamma(sm.families.links.Log())
+    ).fit(tol=1e-14),
+    "glm_invgauss": lambda: smf.glm(
+        "mpg ~ wt + hp", mtcars(), family=sm.families.InverseGaussian(sm.families.links.Log())
+    ).fit(tol=1e-14),
 }
 
 # Linear mixed models, mirroring `mixed_models` in generate_reference.R.

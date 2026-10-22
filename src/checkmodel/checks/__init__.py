@@ -11,6 +11,7 @@ from .normality import NormalityResult, RandomEffectsNormalityResult, check_norm
 from .outliers import OutliersResult, check_outliers
 from .overdispersion import OverdispersionResult, check_overdispersion
 from .predictions import PredictionsResult, check_predictions
+from .residuals import ResidualsResult, SimulatedResiduals, check_residuals, simulate_residuals
 from .singularity import SingularityResult, check_singularity
 from .zeroinflation import ZeroInflationResult, check_zeroinflation
 
@@ -27,6 +28,8 @@ __all__ = [
     "OverdispersionResult",
     "PredictionsResult",
     "RandomEffectsNormalityResult",
+    "ResidualsResult",
+    "SimulatedResiduals",
     "SingularityResult",
     "ZeroInflationResult",
     "binned_residuals",
@@ -39,6 +42,8 @@ __all__ = [
     "check_outliers",
     "check_overdispersion",
     "check_predictions",
+    "check_residuals",
     "check_singularity",
     "check_zeroinflation",
+    "simulate_residuals",
 ]

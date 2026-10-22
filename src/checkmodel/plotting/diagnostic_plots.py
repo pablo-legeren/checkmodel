@@ -42,6 +42,7 @@ __all__ = [
     "plot_qq",
     "plot_random_effects",
     "plot_random_effects_term",
+    "plot_uniformity",
     "plot_zeroinflation",
 ]
 
@@ -130,7 +131,7 @@ def _scatter(ax: Axes, x: np.ndarray, y: np.ndarray, **kwargs: Any) -> None:
     ax.scatter(x, y, rasterized=x.shape[0] > 5000, **opts)
 
 
-def _smooth(ax: Axes, x: np.ndarray, y: np.ndarray) -> float:
+def _smooth(ax: Axes, x: np.ndarray, y: np.ndarray, **kwargs: Any) -> float:
     """Draw a lowess smoother and return its highest value (nan if none was drawn)."""
     from statsmodels.nonparametric.smoothers_lowess import lowess
 
@@ -142,7 +143,9 @@ def _smooth(ax: Axes, x: np.ndarray, y: np.ndarray) -> float:
         idx = np.random.default_rng(0).choice(x.shape[0], _MAX_SMOOTH_POINTS, replace=False)
         x, y = x[idx], y[idx]
     curve = lowess(y, x, frac=2 / 3, it=0)
-    ax.plot(curve[:, 0], curve[:, 1], color=_P["fit"], linewidth=2, solid_capstyle="round")
+    opts: dict[str, Any] = {"color": _P["fit"], "linewidth": 2, "solid_capstyle": "round"}
+    opts.update(kwargs)
+    ax.plot(curve[:, 0], curve[:, 1], **opts)
     return float(np.max(curve[:, 1]))
 
 
@@ -310,6 +313,62 @@ def plot_qq(result: CheckResult, ax: Axes) -> Axes:
     return ax
 
 
+def _plot_uniformity_ax(source: Any, ax: Axes) -> Axes:
+    raw = source.scaled_residuals if hasattr(source, "scaled_residuals") else source.residuals
+    values = np.sort(np.asarray(raw, dtype=float))
+    n = values.shape[0]
+    i = np.arange(1, n + 1)
+    theo = (i - 0.5) / n
+    with _style():
+        ax.fill_between(
+            theo,
+            stats.beta.ppf(0.025, i, n - i + 1),
+            stats.beta.ppf(0.975, i, n - i + 1),
+            color=_P["grid"],
+            alpha=0.8,
+            linewidth=0,
+        )
+        ax.plot([0, 1], [0, 1], color=_P["fit"], linewidth=2)
+        outside = (values <= 0.0) | (values >= 1.0)
+        _scatter(ax, theo[~outside], values[~outside])
+        if outside.any():
+            _scatter(ax, theo[outside], values[outside], color=_P["critical"])
+        subtitle = "Dots should fall along the line"
+        p_value = getattr(source, "p_value", None)
+        if p_value is not None:
+            subtitle += f"  ·  KS p = {p_value:.3g}"
+        _titles(ax, "Uniformity of Residuals", subtitle)
+        ax.set_xlabel("Expected uniform quantiles")
+        ax.set_ylabel("Simulated quantile residuals")
+        ax.set_xlim(0, 1)
+        ax.set_ylim(-0.02, 1.02)
+    return ax
+
+
+def plot_uniformity(source: Any, ax: Axes | None = None) -> Figure:
+    """Q-Q plot of simulated quantile residuals against the uniform distribution.
+
+    Parameters
+    ----------
+    source
+        A :class:`~checkmodel.SimulatedResiduals` or the result of
+        :func:`~checkmodel.check_residuals`.
+    ax
+        Axes to draw on; a new figure is created when omitted.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    with _style():
+        if ax is None:
+            fig, ax = _new_axes()
+        else:
+            fig = cast("Figure", ax.figure)
+        _plot_uniformity_ax(source, ax)
+    return fig
+
+
 def plot_random_effects_term(result: CheckResult, ax: Axes, term: str | None = None) -> Axes:
     """Q-Q plot of the conditional modes of one random-effect term."""
     table = result.table  # type: ignore[attr-defined]
@@ -338,29 +397,41 @@ def plot_random_effects(result: CheckResult, axes: Any = None) -> Figure:
     return fig
 
 
+def _simulated_draws(result: CheckResult, n_sim: int = 200) -> np.ndarray | None:
+    """Return the simulations behind a result, or simulate (fixed seed) for non-Poisson models."""
+    simulation = getattr(result, "simulation", None)
+    if simulation is not None:
+        return cast(np.ndarray, simulation.simulated)
+    if result.adapter.info.family == "poisson":
+        return None
+    return result.adapter.simulate(n_sim, np.random.default_rng(0))
+
+
 def plot_overdispersion(result: CheckResult, ax: Axes) -> Axes:
-    """Squared residuals against the fitted mean, with the Poisson variance line."""
+    """Squared residuals against the fitted mean, with the variance the model expects."""
     from matplotlib.lines import Line2D
 
     adapter = result.adapter
     mu, sq = adapter.mu, (adapter.y - adapter.mu) ** 2
+    draws = _simulated_draws(result)
+    dashed: dict[str, Any] = {"color": _P["muted"], "linewidth": 1.5, "linestyle": (0, (4, 3))}
     with _style():
         _scatter(ax, mu, sq, s=10, alpha=0.35)
-        grid = np.linspace(np.min(mu), np.max(mu), 100)
-        ax.plot(grid, grid, color=_P["muted"], linewidth=1.5, linestyle=(0, (4, 3)))
+        if draws is None:
+            grid = np.linspace(np.min(mu), np.max(mu), 100)
+            ax.plot(grid, grid, **dashed)
+            expected_top = float(np.max(mu))
+            label = "Poisson variance (= mean)"
+        else:
+            expected = np.var(draws, axis=0, ddof=1)
+            expected_top = _smooth(ax, mu, expected, **dashed)
+            label = "Model variance (simulated)"
         peak = _smooth(ax, mu, sq)
-        top = np.nanmax([float(np.quantile(sq, 0.98)), float(np.max(mu)), peak]) * 1.1
+        top = np.nanmax([float(np.quantile(sq, 0.98)), expected_top, peak]) * 1.1
         ax.set_ylim(0, top)
         handles = [
             Line2D([], [], color=_P["fit"], linewidth=2, label="Observed variance (smoothed)"),
-            Line2D(
-                [],
-                [],
-                color=_P["muted"],
-                linewidth=1.5,
-                linestyle=(0, (4, 3)),
-                label="Poisson variance (= mean)",
-            ),
+            Line2D([], [], label=label, **dashed),
         ]
         ax.legend(handles=handles, loc="upper left")
         ratio = result.dispersion_ratio  # type: ignore[attr-defined]
@@ -383,7 +454,13 @@ def plot_zeroinflation(result: CheckResult, ax: Axes) -> Axes:
     top = int(min(np.max(y0), max(10, np.quantile(y0, 0.99)), 30))
     counts = np.arange(top + 1)
     observed = np.array([np.sum(y0 == k) for k in counts])
-    expected = stats.poisson.pmf(counts[:, None], mu[None, :]).sum(axis=1)
+    draws = _simulated_draws(result)
+    if draws is None:
+        expected = stats.poisson.pmf(counts[:, None], mu[None, :]).sum(axis=1)
+        label = "Expected (Poisson)"
+    else:
+        expected = np.array([np.mean(np.sum(draws == k, axis=1)) for k in counts])
+        label = "Expected (simulated)"
     with _style():
         ax.bar(counts, observed, width=0.7, color=_P["points"], edgecolor=_P["surface"])
         ax.plot(counts, expected, color=_P["fit"], linewidth=2, marker="o", markersize=5)
@@ -391,7 +468,7 @@ def plot_zeroinflation(result: CheckResult, ax: Axes) -> Axes:
         ax.grid(axis="x", visible=False)
         handles = [
             Patch(color=_P["points"], label="Observed"),
-            Line2D([], [], color=_P["fit"], marker="o", linewidth=2, label="Expected (Poisson)"),
+            Line2D([], [], color=_P["fit"], marker="o", linewidth=2, label=label),
         ]
         ax.legend(handles=handles, loc="upper right")
         obs = result.observed_zeros  # type: ignore[attr-defined]
@@ -607,6 +684,7 @@ _SINGLE: dict[str, Callable[[Any, Any], Any]] = {
     "random_effects": plot_random_effects_term,
     "overdispersion": plot_overdispersion,
     "zeroinflation": plot_zeroinflation,
+    "residuals": _plot_uniformity_ax,
 }
 
 
@@ -638,8 +716,9 @@ def plot_model_check(
     homogeneity of variance, influential observations, collinearity, normality
     and autocorrelation. Bayesian models show the predictive check and the
     R-hat of each parameter.
-    Mixed models add one Q-Q panel per random-effect term; Poisson models an
-    overdispersion panel. Singularity and convergence have no plot.
+    Mixed models add one Q-Q panel per random-effect term; count models an
+    overdispersion panel; non-Gaussian models a uniform Q-Q plot of simulated
+    residuals. Singularity and convergence have no plot.
 
     Parameters
     ----------
@@ -668,7 +747,7 @@ def plot_model_check(
         res = report["random_effects"]
         for term in res.table["Term"]:  # type: ignore[attr-defined]
             panels.append(partial(plot_random_effects_term, res, term=term))
-    for key in ("autocorrelation", "binned_residuals", "overdispersion"):
+    for key in ("autocorrelation", "binned_residuals", "overdispersion", "residuals"):
         if key in report:
             panels.append(partial(_SINGLE[key], report[key]))
     if "convergence" in report and not isinstance(adapter, BaseAdapter):

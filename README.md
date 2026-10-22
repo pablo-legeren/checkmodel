@@ -74,8 +74,10 @@ check_model(model, X=X, y=y)
 | `check_outliers(model)` | Influential observations | Cook's distance |
 | `check_autocorrelation(model)` | Serially correlated residuals | Durbin-Watson, exact or normal-approximation p-value |
 | `binned_residuals(model)` | Fit of logistic regression | Binned residuals (Gelman & Hill) |
-| `check_overdispersion(model)` | Variance larger than the mean in Poisson models | Pearson chi-squared / dispersion ratio |
-| `check_zeroinflation(model)` | Excess zeros in Poisson models | Predicted vs observed zeros |
+| `simulate_residuals(model)` | Residuals that are uniform for any family if the model is right | Randomized quantile residuals (DHARMa) |
+| `check_residuals(model)` | Do the simulated residuals look uniform? | Kolmogorov-Smirnov test |
+| `check_overdispersion(model)` | Variance larger than the model allows (GLMs, mixed models) | Pearson chi-squared (Poisson) or simulated residuals |
+| `check_zeroinflation(model)` | Excess zeros in count models | Predicted (or simulated) vs observed zeros |
 | `check_singularity(model)` | Random-effect variances at zero (mixed models) | Determinant of the random-effects covariance |
 | `check_convergence(model)` | Whether the fit converged | R-hat and ESS (Bayesian), relative gradient (mixed models) |
 | `icc(model)` | Intraclass correlation (mixed models) | Adjusted and unadjusted ICC |
@@ -111,10 +113,12 @@ report.skipped          # checks that don't apply to this model, and why
 | Backend | Models | Notes |
 |---|---|---|
 | statsmodels | `OLS`, `WLS` results | Formula and array interfaces |
-| statsmodels | `GLM` results: Gaussian, binomial (logistic), Poisson | Weights, offsets and exposure honoured |
+| statsmodels | `GLM` results: Gaussian, binomial (logistic), Poisson, negative binomial, Gamma, inverse Gaussian | Weights, offsets and exposure honoured |
+| statsmodels | `Logit`, `Probit`, `Poisson` and `NegativeBinomial` (NB2, geometric) results | Treated as the equivalent GLM; NB2 like R's `glm.nb()` |
 | statsmodels | `MixedLM` results (linear mixed models) | Random intercepts and slopes via `groups=` and `re_formula=` |
 | scikit-learn | `LinearRegression`, `Ridge`, `Lasso`, `ElasticNet` (and their `CV` variants) | Pass `X=` and `y=` |
 | scikit-learn | `LogisticRegression` (binary) | Pass `X=` and `y=` |
+| scikit-learn | `PoissonRegressor`, `GammaRegressor` | Pass `X=` and `y=`; penalized unless `alpha=0` |
 | PyMC, bambi | Fitted models (ArviZ `DataTree`) | Wrap with `bayesian(idata, model)`; Python 3.12+ |
 | Anything else | Objects implementing the `ModelAdapter` protocol | Five methods; see below |
 
@@ -125,9 +129,9 @@ posterior predictive check:
 |---|---|
 | Linear (OLS, WLS, Gaussian GLM, sklearn regressors) | normality, heteroscedasticity, collinearity, outliers, autocorrelation |
 | Linear mixed models (`MixedLM`) | normality of residuals and random effects, heteroscedasticity, collinearity, outliers, singularity, convergence |
-| Logistic regression | collinearity, outliers, binned residuals |
-| Poisson regression | collinearity, outliers, overdispersion |
-| Other GLMs | collinearity, outliers |
+| Logistic regression | collinearity, outliers, binned residuals, uniformity of simulated residuals |
+| Count models (Poisson, negative binomial) | collinearity, outliers, overdispersion, uniformity of simulated residuals |
+| Other GLMs | collinearity, outliers, uniformity of simulated residuals |
 | Bayesian (PyMC, bambi) | convergence (R-hat, effective sample size) |
 
 Your own model types can plug in by implementing five methods (`model_type`,
@@ -147,6 +151,8 @@ registering an adapter with `register_adapter()`.
 | `binned_residuals(m)` | `binned_residuals(m)` |
 | `check_overdispersion(m)` | `check_overdispersion(m)` |
 | `check_zeroinflation(m)` | `check_zeroinflation(m)` |
+| `simulate_residuals(m)` | `simulate_residuals(m)` |
+| `check_residuals(m)` | `check_residuals(m)` |
 | `check_singularity(m)` | `check_singularity(m)` |
 | `check_convergence(m)` | `check_convergence(m)` |
 | `check_normality(m, effects = "random")` | `check_normality(m, effects="random")` |
@@ -159,6 +165,7 @@ registering an adapter with `register_adapter()`.
 | `model_performance(m)` | `model_performance(m)` |
 | `compare_performance(m1, m2, rank = TRUE)` | `compare_performance(m1, m2, rank=True)` |
 | `lm(mpg ~ wt + factor(cyl), mtcars)` | `smf.ols("mpg ~ wt + C(cyl)", mtcars).fit()` |
+| `MASS::glm.nb(art ~ ment, bioChemists)` | `smf.negativebinomial("art ~ ment", bioChemists).fit()` |
 | `lmer(Reaction ~ Days + (Days \| Subject), sleepstudy)` | `smf.mixedlm("Reaction ~ Days", sleepstudy, groups="Subject", re_formula="~Days").fit()` |
 
 See [Comparison with R](docs/comparison-with-r.md) for the details, including
@@ -197,8 +204,9 @@ distance, log-likelihoods, every test statistic and p-value, VIFs and their
 intervals, outlier thresholds and flags, every R² variant, every
 `model_performance()` column, binned residuals, `compare_performance()`
 tables, overdispersion, zero-inflation, ICC, Nakagawa's R² and lme4's
-influence measures, for 22 models over mtcars, iris, warpbreaks, bioChemists,
-sleepstudy and synthetic data.
+influence measures, for 27 models (including negative binomial, probit,
+cloglog, Gamma and inverse Gaussian GLMs) over mtcars, iris, warpbreaks,
+bioChemists, sleepstudy and synthetic data.
 
 ## Contributing
 

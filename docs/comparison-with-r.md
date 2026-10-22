@@ -26,6 +26,10 @@ the Python version deliberately behaves differently.
 | `compare_performance(..., rank = TRUE)` | `compare_performance(..., rank=True)` | Yes |
 | `check_overdispersion(m)` (Poisson GLM) | `check_overdispersion(m)` | Yes |
 | `check_zeroinflation(m)` (Poisson GLM) | `check_zeroinflation(m)` | Yes |
+| `simulate_residuals(m)` | `simulate_residuals(m)` | Same algorithm (DHARMa's PIT residuals); random, see below |
+| `check_residuals(m)` | `check_residuals(m)` | Same test (`ks.test()`, exact below 100 values); random, see below |
+| `check_overdispersion(m)` (other GLMs, `lmer`) | `check_overdispersion(m)` | Same test on simulated residuals; random, see below |
+| `check_zeroinflation(m)` (`glm.nb`) | `check_zeroinflation(m)` | Same test on simulated residuals; random, see below |
 | `check_singularity(m)` | `check_singularity(m)` | Same rule; see the note on optimizers below |
 | `check_convergence(m)` | `check_convergence(m)` | Same verdict; the gradient is on statsmodels' scale |
 | `check_normality(m)` (`lmer`) | `check_normality(m)` | Yes, on lme4-style studentized residuals |
@@ -50,6 +54,9 @@ the Python version deliberately behaves differently.
 | `lm(y ~ x, data, weights = w)` | `smf.wls("y ~ x", data, weights=data.w).fit()` |
 | `glm(y ~ x, binomial, data)` | `smf.glm("y ~ x", data, family=sm.families.Binomial()).fit()` |
 | `glm(y ~ x, poisson, data)` | `smf.glm("y ~ x", data, family=sm.families.Poisson()).fit()` |
+| `glm(y ~ x, binomial(link = "probit"), data)` | `smf.probit("y ~ x", data).fit()`, or `smf.glm(...)` with `Binomial(links.Probit())` |
+| `MASS::glm.nb(y ~ x, data)` | `smf.negativebinomial("y ~ x", data).fit()` |
+| `glm(y ~ x, Gamma(link = "log"), data)` | `smf.glm("y ~ x", data, family=sm.families.Gamma(links.Log())).fit()` |
 | `factor(cyl)` | `C(cyl)` |
 | `lmer(y ~ x + (1 \| g), data)` | `smf.mixedlm("y ~ x", data, groups="g").fit()` |
 | `lmer(y ~ x + (x \| g), data)` | `smf.mixedlm("y ~ x", data, groups="g", re_formula="~x").fit()` |
@@ -99,10 +106,24 @@ catches it through the relative gradient and suggests refitting, for example
 with `.fit(method="powell")`. Once the boundary is reached,
 `check_singularity()`, `icc()` and `r2_nakagawa()` behave as in R.
 
-**Count models other than Poisson.** For negative binomial and mixed count
-models R checks overdispersion and zero-inflation with simulated (DHARMa)
-residuals. These are not ported yet, so the checks raise
-`CheckNotApplicableError` for those models.
+**Simulated residuals.** `simulate_residuals()` follows
+`DHARMa::simulateResiduals()`: responses are drawn from the fitted model as R's
+`simulate()` does (new group effects for mixed models, the ML shape from
+`MASS::gamma.shape()` for Gamma models), and each residual is the share of
+simulations below the observation, randomized between ties. The draws come
+from NumPy's generator rather than R's, so individual residuals and p-values
+differ between the two; pass `random_state=` for repeatable results.
+`check_model()` uses seed 0. Because the parameters are held at their
+estimates, the residuals are slightly less spread than uniform and the tests
+are conservative, in R as here. `check_model()` adds the uniformity check to
+non-Gaussian models, where R draws a uniform Q-Q plot of the same residuals.
+
+**Which overdispersion test.** As in R, Poisson GLMs use the Pearson
+chi-squared test and every other GLM (Bernoulli included) and mixed models use
+the test on simulated residuals. `residual_type="pearson"` (R's `"normal"`) or
+`"simulated"` overrides that. Pearson residuals come from the model, so prior
+weights count, as in newer versions of `performance`. With Pearson residuals,
+mixed models raise an error instead of R's approximate statistic.
 
 **Bayesian models.**
 
@@ -149,11 +170,20 @@ These match R exactly, even though you might not expect them:
 - **Standardized residuals of a GLM** are Pearson-based, matching
   `rstandard()` in the R version the reference values come from (4.6.1),
   whose default type is `"pearson"`.
+- **Leverage of GLMs uses the IRLS (Fisher) weights**, as `hatvalues()` does.
+  statsmodels' own `hat_matrix_diag` uses the observed information, which
+  differs for non-canonical links such as probit, cloglog or a log-link Gamma
+  model; it also changes Cook's distance and standardized residuals.
+- **Gamma and inverse Gaussian likelihoods** estimate the dispersion as
+  deviance / n, as R's `AIC()` and `logLik()` do. statsmodels' `llf` uses the
+  Pearson dispersion, so its AIC differs slightly.
+- **Negative binomial models** (`NegativeBinomial` with NB2 variance) are
+  treated like `MASS::glm.nb()`: a GLM with `theta = 1 / alpha`, whose AIC
+  counts theta as a parameter. NB1 models have a different variance function
+  and are not supported.
 
 ## Not yet ported
 
-Generalized linear mixed models, simulated (DHARMa-style) residuals and the
-checks that depend on them (overdispersion and zero-inflation of negative
-binomial and mixed count models), ICC and R² confidence intervals for
-frequentist models, `MixedLM` variance components (`vc_formula`), and the
-Bayesian pieces listed above.
+Generalized linear mixed models, ICC and R² confidence intervals for
+frequentist models, `MixedLM` variance components (`vc_formula`), outlier
+tests on simulated residuals, and the Bayesian pieces listed above.

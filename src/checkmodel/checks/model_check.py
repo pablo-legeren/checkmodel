@@ -21,6 +21,7 @@ from .normality import check_normality
 from .outliers import check_outliers
 from .overdispersion import check_overdispersion
 from .predictions import check_predictions
+from .residuals import check_residuals
 from .singularity import check_singularity
 from .zeroinflation import check_zeroinflation
 
@@ -42,6 +43,7 @@ _CHECKS: dict[str, Callable[..., CheckResult]] = {
     "convergence": check_convergence,
     "overdispersion": check_overdispersion,
     "zeroinflation": check_zeroinflation,
+    "residuals": check_residuals,
 }
 _ALPHA_CHECKS = {
     "predictions",
@@ -50,7 +52,9 @@ _ALPHA_CHECKS = {
     "autocorrelation",
     "random_effects",
     "overdispersion",
+    "residuals",
 }
+_RANDOM_CHECKS = {"predictions", "overdispersion", "zeroinflation", "residuals"}
 
 
 def _relevant_checks(adapter: BaseAdapter | BayesianModel) -> list[str]:
@@ -73,11 +77,13 @@ def _frequentist_checks(adapter: BaseAdapter) -> list[str]:
         ]
     if info.is_linear:
         return ["normality", "heteroscedasticity", "collinearity", "outliers", "autocorrelation"]
+    # Non-Gaussian models: simulated quantile residuals take the place of the
+    # normal Q-Q plot, as `residual_type = "simulated"` does in R.
     if info.is_binomial:
-        return ["collinearity", "outliers", "binned_residuals"]
-    if info.family == "poisson":
-        return ["collinearity", "outliers", "overdispersion"]
-    return ["collinearity", "outliers"]
+        return ["collinearity", "outliers", "binned_residuals", "residuals"]
+    if info.is_count:
+        return ["collinearity", "outliers", "overdispersion", "residuals"]
+    return ["collinearity", "outliers", "residuals"]
 
 
 class ModelCheckReport(Mapping[str, CheckResult]):
@@ -174,9 +180,11 @@ def check_model(
       and autocorrelation;
     * linear mixed models: normality of residuals and of random effects,
       heteroscedasticity, collinearity, outliers, singularity and convergence;
-    * logistic regression: collinearity, outliers and binned residuals;
-    * Poisson regression: collinearity, outliers and overdispersion;
-    * other GLMs: collinearity and outliers;
+    * logistic regression: collinearity, outliers, binned residuals and
+      uniformity of simulated residuals;
+    * count models (Poisson, negative binomial): collinearity, outliers,
+      overdispersion and uniformity of simulated residuals;
+    * other GLMs: collinearity, outliers and uniformity of simulated residuals;
     * Bayesian models (see :func:`checkmodel.bayesian`): convergence.
 
     Parameters
@@ -190,12 +198,12 @@ def check_model(
         ``"predictions"``, ``"normality"``, ``"random_effects"``, ``"heteroscedasticity"``,
         ``"collinearity"``, ``"outliers"``, ``"autocorrelation"``,
         ``"binned_residuals"``, ``"singularity"``, ``"convergence"``,
-        ``"overdispersion"`` and ``"zeroinflation"``.
+        ``"overdispersion"``, ``"zeroinflation"`` and ``"residuals"``.
     alpha
         Significance level for the formal tests.
     random_state
-        Seed for the simulations of the predictive check, so that reports are
-        reproducible; ``None`` draws a fresh seed.
+        Seed for the simulations (predictive check, simulated residuals), so
+        that reports are reproducible; ``None`` draws a fresh seed.
 
     Returns
     -------
@@ -221,7 +229,7 @@ def check_model(
     skipped: dict[str, str] = {}
     for name in wanted:
         kwargs: dict[str, Any] = {"alpha": alpha} if name in _ALPHA_CHECKS else {}
-        if name == "predictions":
+        if name in _RANDOM_CHECKS:
             kwargs["random_state"] = random_state
         try:
             results[name] = _CHECKS[name](adapter, **kwargs)

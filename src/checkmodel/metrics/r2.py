@@ -84,8 +84,8 @@ def r2(model: Model, X: ArrayLike | None = None, y: ArrayLike | None = None) -> 
 
     * Linear models: R² and adjusted R².
     * Gaussian GLMs: R² (``1 - SSE/SST``).
-    * Logistic regression with a 0/1 outcome: Tjur's R².
-    * Other GLMs (Poisson, ...): Nagelkerke's R².
+    * Logistic regression (logit link) with a 0/1 outcome: Tjur's R².
+    * Other GLMs (Poisson, probit, ...): Nagelkerke's R².
     * Linear mixed models: Nakagawa's conditional and marginal R².
     * Bayesian models: Bayesian R² (see :func:`r2_bayes`).
 
@@ -123,7 +123,10 @@ def r2(model: Model, X: ArrayLike | None = None, y: ArrayLike | None = None) -> 
         )
     if info.is_binomial:
         _require_bernoulli(adapter)
-        return R2Result({"R2_Tjur": r2_tjur(adapter)}, "Logistic Regression")
+        # As r2.glm() in R: Tjur's R2 for logit links only; probit, cloglog and
+        # other binary models fall through to Nagelkerke's.
+        if info.link == "logit":
+            return R2Result({"R2_Tjur": r2_tjur(adapter)}, "Logistic Regression")
     return R2Result({"R2_Nagelkerke": r2_nagelkerke(adapter)}, "Generalized Linear Regression")
 
 

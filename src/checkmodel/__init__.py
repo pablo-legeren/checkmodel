@@ -24,6 +24,8 @@ from .checks import (
     OverdispersionResult,
     PredictionsResult,
     RandomEffectsNormalityResult,
+    ResidualsResult,
+    SimulatedResiduals,
     SingularityResult,
     ZeroInflationResult,
     binned_residuals,
@@ -36,8 +38,10 @@ from .checks import (
     check_outliers,
     check_overdispersion,
     check_predictions,
+    check_residuals,
     check_singularity,
     check_zeroinflation,
+    simulate_residuals,
 )
 from .metrics import (
     BayesR2Result,
@@ -82,6 +86,8 @@ __all__ = [
     "PredictionsResult",
     "R2Result",
     "RandomEffectsNormalityResult",
+    "ResidualsResult",
+    "SimulatedResiduals",
     "SingularityResult",
     "Term",
     "UnsupportedModelError",
@@ -100,6 +106,7 @@ __all__ = [
     "check_outliers",
     "check_overdispersion",
     "check_predictions",
+    "check_residuals",
     "check_singularity",
     "check_zeroinflation",
     "compare_performance",
@@ -114,5 +121,6 @@ __all__ = [
     "r2_nakagawa",
     "r2_tjur",
     "register_adapter",
+    "simulate_residuals",
     "variance_components",
 ]

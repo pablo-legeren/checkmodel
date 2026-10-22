@@ -313,9 +313,11 @@ def test_generic_poisson_quantities(poisson):
 
 
 def test_generic_adapter_rejects_unknown_family():
-    class Gamma:
+    class Custom:
+        family = "tweedie"
+
         def model_type(self):
-            return ModelType("gamma", "inverse", "custom", "G")
+            return ModelType(self.family, "inverse", "custom", "G")
 
         def get_response(self):
             return np.array([1.0, 2.0, 3.0])
@@ -329,7 +331,7 @@ def test_generic_adapter_rejects_unknown_family():
         def get_model_matrix(self):
             return np.column_stack([np.ones(3), [1.0, 2.0, 3.0]])
 
-    a = as_adapter(Gamma())
+    a = as_adapter(Custom())
     with pytest.raises(UnsupportedModelError):
         _ = a.hat
     with pytest.raises(UnsupportedModelError):
@@ -339,6 +341,11 @@ def test_generic_adapter_rejects_unknown_family():
     with pytest.raises(UnsupportedModelError):
         _ = a.deviance
     assert a.loglik is None
+
+    gamma = Custom()
+    gamma.family = "gamma"
+    g = as_adapter(gamma)
+    assert np.isfinite(g.hat).all() and np.isfinite(g.deviance) and np.isfinite(g.loglik)
 
 
 def test_model_without_intercept_null_model(mtcars):

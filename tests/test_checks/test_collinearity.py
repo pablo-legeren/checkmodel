@@ -25,6 +25,11 @@ WITH_VIF = [
     "glm_logit_synth",
     "glm_pois",
     "glm_pois_bio",
+    "glm_negbin",
+    "glm_probit",
+    "glm_cloglog",
+    "glm_gamma",
+    "glm_invgauss",
 ]
 COLUMNS = [
     "VIF",

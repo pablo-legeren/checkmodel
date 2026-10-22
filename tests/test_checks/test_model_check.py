@@ -27,12 +27,14 @@ def test_logistic_and_poisson_checks(mtcars_logit, poisson):
         "collinearity",
         "outliers",
         "binned_residuals",
+        "residuals",
     ]
     assert list(check_model(poisson)) == [
         "predictions",
         "collinearity",
         "outliers",
         "overdispersion",
+        "residuals",
     ]
 
 
@@ -91,8 +93,8 @@ def test_repr(fit):
     ("name", "panels"),
     [
         ("lm_mtcars", 7),
-        ("glm_logit", 5),
-        ("glm_pois", 5),
+        ("glm_logit", 6),
+        ("glm_pois", 6),
         ("lm_hetero", 6),
         ("mixed_sleep_slope", 7),
         ("mixed_synth", 7),
