@@ -45,14 +45,8 @@ jobs:
       # Bayesian tests need ArviZ 1.x (Python >= 3.12), so the coverage floor
       # applies where the whole suite runs.
       - run: >-
-          pytest --cov=checkmodel --cov-report=xml
+          pytest --cov=checkmodel --cov-report=term
           ${{ contains(fromJSON('["3.12", "3.13"]'), matrix.python-version) && '--cov-fail-under=90' || '' }}
-      - uses: codecov/codecov-action@v7
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        with:
-          files: coverage.xml
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
 
   bayes:
     name: bayes (PyMC and bambi fits)
