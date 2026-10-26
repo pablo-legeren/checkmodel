@@ -11,7 +11,7 @@ from scipy import special, stats
 
 from .._introspection import as_adapter
 from .._types import ArrayLike, CheckNotApplicableError, Model
-from ._base import CheckResult
+from ._base import CheckResult, warn_about_fit
 
 __all__ = ["CollinearityResult", "check_collinearity"]
 
@@ -27,12 +27,23 @@ class CollinearityResult(CheckResult):
     with the same columns as R: ``Term``, ``VIF``, ``VIF_CI_low``,
     ``VIF_CI_high``, ``SE_factor``, ``Tolerance``, ``Tolerance_CI_low`` and
     ``Tolerance_CI_high``.
+
+    Attributes
+    ----------
+    rank_deficient
+        Whether the model matrix is rank deficient (perfect collinearity). The
+        check then fails whatever the VIFs say.
+    aliased
+        Design-matrix columns that are exact linear combinations of earlier
+        ones: the coefficients R reports as ``NA``.
     """
 
     key = "collinearity"
     title = "Collinearity"
 
     table: pd.DataFrame = field(default_factory=pd.DataFrame)
+    rank_deficient: bool = False
+    aliased: list[str] = field(default_factory=list)
 
     @property
     def vif(self) -> pd.Series:
@@ -85,6 +96,13 @@ def check_collinearity(
     CheckNotApplicableError
         If the model has fewer than two terms.
 
+    Warns
+    -----
+    UserWarning
+        When the model has no intercept or its model matrix is rank deficient;
+        also for a penalized fit and for a binomial model with complete
+        separation.
+
     Notes
     -----
     For scikit-learn models the coefficient correlation is computed from
@@ -97,6 +115,7 @@ def check_collinearity(
         raise CheckNotApplicableError(
             "Not enough model terms to check for multicollinearity (need at least two)."
         )
+    warn_about_fit(adapter)
     icpt = adapter.intercept_index()
     if icpt is None:
         warnings.warn("Model without intercept. VIFs may not be sensible.", stacklevel=2)
@@ -108,7 +127,8 @@ def check_collinearity(
     det_R = _det(R)
     # Judge rank numerically (SVD): with an exactly collinear design det(R) can
     # still come out as a tiny positive number, depending on the BLAS.
-    if adapter.rank < adapter.n_params or np.linalg.matrix_rank(R) < R.shape[0]:
+    rank_deficient = bool(adapter.rank < adapter.n_params or np.linalg.matrix_rank(R) < R.shape[0])
+    if rank_deficient:
         warnings.warn("Model matrix is rank deficient. VIFs may not be sensible.", stacklevel=2)
 
     vif = np.empty(len(terms))
@@ -148,8 +168,13 @@ def check_collinearity(
     worst = float(np.nanmax(vif))
     high = [t.name for t, v_ in zip(terms, vif, strict=True) if v_ >= threshold]
     moderate = [t.name for t, v_ in zip(terms, vif, strict=True) if LOW_VIF <= v_ < threshold]
-    passed = not high
-    if high:
+    names = adapter.column_names()
+    aliased = [names[j] for j in adapter.aliased]
+    passed = not high and not rank_deficient
+    if rank_deficient:
+        message = "Warning: Perfect collinearity: the model matrix is rank deficient"
+        message += f" (aliased terms: {', '.join(aliased)})." if aliased else "."
+    elif high:
         message = f"Warning: High collinearity (VIF >= {threshold:g}) for {', '.join(high)}."
     elif moderate:
         message = (
@@ -166,4 +191,6 @@ def check_collinearity(
         message=message,
         adapter=adapter,
         table=table,
+        rank_deficient=rank_deficient,
+        aliased=aliased,
     )

@@ -16,8 +16,8 @@ report.plot()
 
 `check_model()` works out what kind of model it was given and runs the
 checks that make sense for it. A linear regression gets normality,
-homoscedasticity, multicollinearity, influential observations and
-autocorrelation. A logistic regression gets binned residuals, a count model
+homoscedasticity, multicollinearity and influential observations, plus
+autocorrelation for time series. A logistic regression gets binned residuals, a count model
 overdispersion and zero-inflation, and a mixed model singularity and
 random-effect normality. Every model starts with a posterior predictive check.
 

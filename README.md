@@ -1,5 +1,7 @@
 # checkmodel
 
+**Status: alpha – API may change before 1.0**
+
 [![PyPI version](https://img.shields.io/pypi/v/checkmodel.svg)](https://pypi.org/project/checkmodel/)
 [![Downloads](https://static.pepy.tech/badge/checkmodel/month)](https://pepy.tech/project/checkmodel)
 [![CI](https://github.com/pablo-legeren/checkmodel/actions/workflows/ci.yml/badge.svg)](https://github.com/pablo-legeren/checkmodel/actions/workflows/ci.yml)
@@ -47,7 +49,17 @@ Normality of residuals: Warning: Non-normality of residuals detected (p = 0.021)
 Homogeneity of variance: OK: Error variance appears to be homoscedastic (p = 0.402).
 Collinearity: OK: Low collinearity (all VIF < 5; max 1.77).
 Influential observations: OK: No outliers detected (Cook's distance > 0.808).
-Autocorrelation: Warning: Autocorrelated residuals detected (p = 0.041).
+```
+
+Autocorrelation is tested only when the observations are indexed by time (a
+pandas `DatetimeIndex` or `PeriodIndex`), because in cross-sectional data the
+Durbin-Watson test just reacts to how the rows happen to be sorted; R's
+`check_model()` leaves it out too. Ask for it by name when the row order means
+something:
+
+```python
+check_model(fit, checks=["normality", "autocorrelation"])
+check_autocorrelation(fit)   # or on its own
 ```
 
 ![check_model() diagnostic panel](https://raw.githubusercontent.com/pablo-legeren/checkmodel/main/docs/images/check_model.png)
@@ -60,6 +72,20 @@ from sklearn.linear_model import LinearRegression
 model = LinearRegression().fit(X, y)
 check_model(model, X=X, y=y)
 ```
+
+## Examples
+
+Worked notebooks, runnable in the browser:
+
+| Notebook | |
+|---|---|
+| Quickstart: a linear and a logistic model, then a comparison | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pablo-legeren/checkmodel/blob/main/examples/quickstart.ipynb) |
+| Diagnosing a linear regression | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pablo-legeren/checkmodel/blob/main/examples/01_linear_regression.ipynb) |
+| Logistic regression: binned and simulated residuals | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pablo-legeren/checkmodel/blob/main/examples/02_logistic_regression.ipynb) |
+| Comparing models across statsmodels and scikit-learn | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pablo-legeren/checkmodel/blob/main/examples/03_model_comparison.ipynb) |
+| Linear mixed models: random effects, ICC, Nakagawa's R² | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pablo-legeren/checkmodel/blob/main/examples/04_mixed_models.ipynb) |
+| Coming from R: the same analysis side by side | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pablo-legeren/checkmodel/blob/main/examples/05_coming_from_r.ipynb) |
+| Bayesian models with bambi (Python 3.12+) | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pablo-legeren/checkmodel/blob/main/examples/06_bayesian_models.ipynb) |
 
 ## What's inside
 
@@ -115,7 +141,7 @@ report.skipped          # checks that don't apply to this model, and why
 | statsmodels | `GLM` results: Gaussian, binomial (logistic), Poisson, negative binomial, Gamma, inverse Gaussian | Weights, offsets and exposure honoured |
 | statsmodels | `Logit`, `Probit`, `Poisson` and `NegativeBinomial` (NB2, geometric) results | Treated as the equivalent GLM; NB2 like R's `glm.nb()` |
 | statsmodels | `MixedLM` results (linear mixed models) | Random intercepts and slopes via `groups=` and `re_formula=` |
-| scikit-learn | `LinearRegression`, `Ridge`, `Lasso`, `ElasticNet` (and their `CV` variants) | Pass `X=` and `y=` |
+| scikit-learn | `LinearRegression`, `Ridge`, `Lasso`, `ElasticNet` (and their `CV` variants) | Pass `X=` and `y=`; penalized fits get a warning that leverage and Cook's distance are approximate |
 | scikit-learn | `LogisticRegression` (binary) | Pass `X=` and `y=` |
 | scikit-learn | `PoissonRegressor`, `GammaRegressor` | Pass `X=` and `y=`; penalized unless `alpha=0` |
 | PyMC, bambi | Fitted models (ArviZ `DataTree`) | Wrap with `bayesian(idata, model)`; Python 3.12+ |
@@ -126,7 +152,7 @@ posterior predictive check:
 
 | Model | Checks |
 |---|---|
-| Linear (OLS, WLS, Gaussian GLM, sklearn regressors) | normality, heteroscedasticity, collinearity, outliers, autocorrelation |
+| Linear (OLS, WLS, Gaussian GLM, sklearn regressors) | normality, heteroscedasticity, collinearity, outliers; autocorrelation when the rows are indexed by time |
 | Linear mixed models (`MixedLM`) | normality of residuals and random effects, heteroscedasticity, collinearity, outliers, singularity, convergence |
 | Logistic regression | collinearity, outliers, binned residuals, uniformity of simulated residuals |
 | Count models (Poisson, negative binomial) | collinearity, outliers, overdispersion, uniformity of simulated residuals |
@@ -139,36 +165,22 @@ registering an adapter with `register_adapter()`.
 
 ## Coming from R?
 
-| R (`performance`) | Python (`checkmodel`) |
+Function names and arguments follow R. The common cases:
+
+| R | Python |
 |---|---|
-| `check_model(m)` | `check_model(m).plot()` |
-| `check_normality(m)` | `check_normality(m)` |
-| `check_heteroscedasticity(m)` | `check_heteroscedasticity(m)` |
-| `check_collinearity(m)` | `check_collinearity(m)` |
+| `performance::check_model(m)` | `check_model(m)`, then `.plot()` for the panel |
+| `check_normality(m)`, `check_collinearity(m)`, ... | same names: `check_normality(m)`, `check_collinearity(m)`, ... |
 | `check_outliers(m, method = "cook")` | `check_outliers(m)` |
-| `check_autocorrelation(m)` | `check_autocorrelation(m, method="bootstrap")` |
-| `binned_residuals(m)` | `binned_residuals(m)` |
-| `check_overdispersion(m)` | `check_overdispersion(m)` |
-| `check_zeroinflation(m)` | `check_zeroinflation(m)` |
-| `simulate_residuals(m)` | `simulate_residuals(m)` |
-| `check_residuals(m)` | `check_residuals(m)` |
-| `check_singularity(m)` | `check_singularity(m)` |
-| `check_convergence(m)` | `check_convergence(m)` |
-| `check_normality(m, effects = "random")` | `check_normality(m, effects="random")` |
-| `icc(m)` | `icc(m)` |
-| `check_predictions(m)` | `check_predictions(m)` |
-| `r2_bayes(m)` | `r2_bayes(bayesian(idata, model))` |
-| `looic(m)` | `looic(bayesian(idata, model))` |
-| `r2(m)` | `r2(m)` |
-| `r2_tjur(m)`, `r2_nagelkerke(m)`, ... | `r2_tjur(m)`, `r2_nagelkerke(m)`, ... |
-| `model_performance(m)` | `model_performance(m)` |
+| `r2(m)`, `model_performance(m)` | `r2(m)`, `model_performance(m)` |
 | `compare_performance(m1, m2, rank = TRUE)` | `compare_performance(m1, m2, rank=True)` |
+| `r2_bayes(m)` (rstanarm, brms) | `r2_bayes(bayesian(idata, model))` (PyMC, bambi) |
 | `lm(mpg ~ wt + factor(cyl), mtcars)` | `smf.ols("mpg ~ wt + C(cyl)", mtcars).fit()` |
-| `MASS::glm.nb(art ~ ment, bioChemists)` | `smf.negativebinomial("art ~ ment", bioChemists).fit()` |
 | `lmer(Reaction ~ Days + (Days \| Subject), sleepstudy)` | `smf.mixedlm("Reaction ~ Days", sleepstudy, groups="Subject", re_formula="~Days").fit()` |
 
-See [Comparison with R](docs/comparison-with-r.md) for the details, including
-the few places where the defaults differ on purpose.
+The full function-by-function mapping, more model formulas and the few places
+where the defaults differ on purpose are in
+[Comparison with R](https://github.com/pablo-legeren/checkmodel/blob/main/docs/comparison-with-r.md).
 
 ## Why not just use X?
 

@@ -13,7 +13,7 @@ from scipy import stats
 
 from .._introspection import BaseAdapter, as_adapter
 from .._types import ArrayLike, FloatArray, Model
-from ._base import CheckResult, format_p
+from ._base import CheckResult, format_p, warn_about_fit
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -312,6 +312,7 @@ def check_residuals(
         simulation = simulate_residuals(
             model, X, y, iterations=iterations, random_state=random_state
         )
+    warn_about_fit(simulation.adapter, penalized=False)
     cdf = _uniform_cdf if distribution is None else distribution
     d, p = ks_test(simulation.scaled_residuals, cdf, alternative)
     passed = not p < alpha

@@ -8,10 +8,10 @@ the Python version deliberately behaves differently.
 
 | R | Python | Same numbers? |
 |---|---|---|
-| `check_model(m)` | `check_model(m)`, then `.plot()` | Same checks per model type; see the panel notes below |
+| `check_model(m)` | `check_model(m)`, then `.plot()` | Same checks per model type, plus autocorrelation for time-indexed data; see below |
 | `check_normality(m)` | `check_normality(m)` | Yes: Shapiro-Wilk on `rstandard()`, KS against N(0, 1) from 5000 residuals |
 | `check_heteroscedasticity(m)` | `check_heteroscedasticity(m)` | Yes, and equals `car::ncvTest(m)` |
-| `check_collinearity(m)` | `check_collinearity(m)` | Yes, including generalized VIFs, `SE_factor` and the VIF intervals |
+| `check_collinearity(m)` | `check_collinearity(m)` | Yes, including generalized VIFs, `SE_factor` and the VIF intervals; a rank-deficient model fails, see below |
 | `check_outliers(m, method = "cook")` | `check_outliers(m)` | Yes, including the default threshold |
 | `check_autocorrelation(m)` | `check_autocorrelation(m, method="bootstrap")` | Same statistic; the p-value is random in both |
 | `lmtest::dwtest(m, alternative = "two.sided")` | `check_autocorrelation(m)` | Yes (the default) |
@@ -66,6 +66,14 @@ the Python version deliberately behaves differently.
 
 ## Where the defaults differ, and why
 
+**Autocorrelation in `check_model()`.** R's `check_model()` never tests for
+autocorrelation. `checkmodel` follows it for cross-sectional data, where the
+Durbin-Watson test only reacts to the order in which the rows happen to be
+stored (on `mtcars` it reports p = 0.041), but adds the test when the
+observations are indexed by time: a pandas `DatetimeIndex` or `PeriodIndex`.
+`check_model(m, checks=[..., "autocorrelation"])` runs it on any linear model.
+Version 0.1.0 ran it for every linear model.
+
 **Autocorrelation p-value.** R's `check_autocorrelation()` gets its p-value by
 resampling residuals 1000 times, so it changes between runs. `checkmodel`
 defaults to the deterministic p-value of `lmtest::dwtest()`: exact (Imhof's
@@ -79,8 +87,35 @@ treats such a model like the equivalent linear model, which it is.
 
 **Pass/fail for collinearity.** R prints VIFs grouped as low (< 5), moderate
 (5–10) and high (≥ 10) without a verdict. `checkmodel` sets `passed = False`
-only when a term reaches `threshold` (10 by default) and reports moderate
+when a term reaches `threshold` (10 by default) and reports moderate
 collinearity as a note.
+
+**Rank-deficient models.** When the model matrix has exactly collinear
+columns, for example a dummy for every category plus an intercept, R's
+`check_collinearity()` warns "Model matrix is rank deficient. VIFs may not be
+sensible." and still prints the VIFs, which can all look low. `checkmodel`
+gives the same warning, and the check fails with "Perfect collinearity" and the
+aliased columns: those R's `lm()` reports as `NA` (`alias()` in R). The result
+has `rank_deficient` and `aliased` attributes.
+
+**Penalized models.** R's `performance` has no penalized models to compare
+with. For scikit-learn's `Ridge`, `Lasso`, `ElasticNet`, penalized
+`LogisticRegression` and `PoissonRegressor` or `GammaRegressor` with
+`alpha > 0`, leverage, Cook's distance, standardized residuals and residual
+degrees of freedom are computed as if the fit were unpenalized. They are
+approximate, so `check_model()`, `check_outliers()`, `check_normality()`,
+`check_heteroscedasticity()` and `check_collinearity()` warn once, and the
+report says so in its header.
+
+**Complete separation.** When every fitted probability of a binomial model is
+within 1e-6 of 0 or 1, `checkmodel` warns that the diagnostics are
+unreliable. R's `glm()` prints its own "fitted probabilities numerically 0 or
+1 occurred" warning when fitting, statsmodels a `PerfectSeparationWarning`.
+
+**Plots of large models.** Past 5000 observations, each panel draws a
+fixed-seed subsample that keeps every point outside the bands and every
+observation flagged by Cook's distance, and density curves past 10 000 values
+are binned. The tests always use every observation.
 
 **Term order.** patsy sorts categorical terms before numeric ones in the design
 matrix. `checkmodel` puts terms back in the order they appear in the formula,

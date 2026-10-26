@@ -78,7 +78,9 @@ packages = ["src/checkmodel"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
-markers = ["slow: fits real PyMC/bambi models (needs the bayes extra)"]
+markers = [
+    "slow: long-running tests (real PyMC/bambi fits, which need the bayes extra; plots of 200k observations); deselect with -m 'not slow'",
+]
 filterwarnings = ["error::FutureWarning:checkmodel"]
 
 [tool.coverage.run]

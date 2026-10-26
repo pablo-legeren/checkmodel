@@ -64,7 +64,8 @@ def test_same_result_for_statsmodels_and_sklearn(mtcars_ols, mtcars_logit, refer
 
 def test_penalized_sklearn_runs(mtcars):
     X, y = mtcars[["wt", "hp"]], mtcars["mpg"]
-    res = check_outliers(Lasso(alpha=0.5).fit(X, y), X, y)
+    with pytest.warns(UserWarning, match="`Lasso` is a penalized fit"):
+        res = check_outliers(Lasso(alpha=0.5).fit(X, y), X, y)
     assert res.distances.index.equals(X.index)
 
 

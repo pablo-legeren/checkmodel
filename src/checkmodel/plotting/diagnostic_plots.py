@@ -14,7 +14,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
-from scipy import stats
+from scipy import special, stats
 
 from .._introspection import BaseAdapter
 
@@ -86,7 +86,16 @@ _RC: dict[str, Any] = {
     "font.size": 9,
 }
 
-_MAX_SMOOTH_POINTS = 5000
+# Past this many observations, panels draw a deterministic subsample (and the
+# lowess smoother is fitted on one). Points that matter, such as those outside
+# the bands or flagged by Cook's distance, are always kept; the tests are
+# computed on all observations either way.
+_MAX_PLOT_POINTS = 5000
+# Past this many points a density curve is a binned KDE instead of an exact one.
+_MAX_KDE_POINTS = 10_000
+_KDE_BINS = 2048
+# Share of points farthest from the bulk that a subsampled panel always keeps.
+_TAIL_SHARE = 0.01
 
 
 @contextmanager
@@ -125,10 +134,52 @@ def _titles(ax: Axes, title: str, subtitle: str) -> None:
     )
 
 
-def _scatter(ax: Axes, x: np.ndarray, y: np.ndarray, **kwargs: Any) -> None:
+def _thin(n: int, keep: np.ndarray | None = None, limit: int = _MAX_PLOT_POINTS) -> np.ndarray:
+    """Sorted indices of a deterministic subsample of ``n`` points.
+
+    All indices when ``n <= limit``. Otherwise ``limit`` points drawn with a
+    fixed seed plus every point where the boolean mask ``keep`` is true.
+    """
+    if n <= limit:
+        return np.arange(n)
+    forced = np.zeros(n, dtype=bool) if keep is None else np.asarray(keep, dtype=bool)
+    rest = np.flatnonzero(~forced)
+    drawn = np.random.default_rng(0).choice(rest, min(limit, rest.shape[0]), replace=False)
+    return np.sort(np.concatenate([np.flatnonzero(forced), drawn]))
+
+
+def _tails(values: np.ndarray) -> np.ndarray:
+    """Mask of the ``_TAIL_SHARE`` of values farthest from the median (and of non-finite ones)."""
+    dist = np.abs(values - np.nanmedian(values))
+    return np.nan_to_num(dist, nan=np.inf) >= np.nanquantile(dist, 1.0 - _TAIL_SHARE)
+
+
+def _cook_outliers(adapter: BaseAdapter) -> np.ndarray:
+    """Mask of the observations ``check_outliers()`` flags with its default threshold."""
+    from ..checks.outliers import _default_threshold
+
+    return np.nan_to_num(adapter.cooks_distance, nan=0.0) > _default_threshold(adapter)
+
+
+def _scatter(
+    ax: Axes, x: np.ndarray, y: np.ndarray, keep: np.ndarray | None = None, **kwargs: Any
+) -> None:
+    """Scatter plot; past ``_MAX_PLOT_POINTS``, a subsample that keeps ``keep`` and the tails."""
+    if x.shape[0] > _MAX_PLOT_POINTS:
+        forced = _tails(y) if keep is None else np.asarray(keep, dtype=bool) | _tails(y)
+        idx = _thin(x.shape[0], forced)
+        x, y = x[idx], y[idx]
     opts: dict[str, Any] = {"s": 16, "color": _P["points"], "alpha": 0.75, "linewidths": 0}
     opts.update(kwargs)
     ax.scatter(x, y, rasterized=x.shape[0] > 5000, **opts)
+
+
+def _scatter_fitted(
+    ax: Axes, adapter: BaseAdapter, x: np.ndarray, y: np.ndarray, **kwargs: Any
+) -> None:
+    """Scatter of a per-observation quantity; a subsample keeps Cook's outliers."""
+    keep = _cook_outliers(adapter) if x.shape[0] > _MAX_PLOT_POINTS else None
+    _scatter(ax, x, y, keep, **kwargs)
 
 
 def _smooth(ax: Axes, x: np.ndarray, y: np.ndarray, **kwargs: Any) -> float:
@@ -139,10 +190,14 @@ def _smooth(ax: Axes, x: np.ndarray, y: np.ndarray, **kwargs: Any) -> float:
     x, y = x[ok], y[ok]
     if x.shape[0] < 5 or np.ptp(x) == 0:
         return float("nan")
-    if x.shape[0] > _MAX_SMOOTH_POINTS:
-        idx = np.random.default_rng(0).choice(x.shape[0], _MAX_SMOOTH_POINTS, replace=False)
+    delta = 0.0
+    if x.shape[0] > _MAX_PLOT_POINTS:
+        idx = np.random.default_rng(0).choice(x.shape[0], _MAX_PLOT_POINTS, replace=False)
         x, y = x[idx], y[idx]
-    curve = lowess(y, x, frac=2 / 3, it=0)
+        # Interpolate between local fits less than 1% of the range apart; lowess
+        # with frac = 2/3 is otherwise quadratic in the number of points.
+        delta = 0.01 * float(np.ptp(x))
+    curve = lowess(y, x, frac=2 / 3, it=0, delta=delta)
     opts: dict[str, Any] = {"color": _P["fit"], "linewidth": 2, "solid_capstyle": "round"}
     opts.update(kwargs)
     ax.plot(curve[:, 0], curve[:, 1], **opts)
@@ -162,7 +217,7 @@ def plot_linearity(adapter: BaseAdapter, ax: Axes) -> Axes:
         x, r = adapter.mu, adapter.resid
         if not adapter.info.is_linear:
             r = adapter.pearson_residuals
-        _scatter(ax, x, r)
+        _scatter_fitted(ax, adapter, x, r)
         _refline(ax)
         _smooth(ax, x, r)
         _titles(ax, "Linearity", "Reference line should be flat and horizontal")
@@ -176,7 +231,7 @@ def plot_homogeneity(adapter: BaseAdapter, ax: Axes, result: CheckResult | None 
     with _style():
         x = adapter.mu
         yv = np.sqrt(np.abs(adapter.std_residuals))
-        _scatter(ax, x, yv)
+        _scatter_fitted(ax, adapter, x, yv)
         _smooth(ax, x, yv)
         subtitle = "Reference line should be flat and horizontal"
         if result is not None and result.p_value is not None:
@@ -194,6 +249,11 @@ def plot_outliers(result: CheckResult, ax: Axes) -> Axes:
     with _style():
         d = distances.to_numpy()
         pos = np.arange(d.shape[0])
+        if d.shape[0] > _MAX_PLOT_POINTS:
+            # Keep the flagged and the largest distances, so the peaks stay where they are.
+            top = np.nan_to_num(d, nan=0.0) >= np.nanquantile(d, 1.0 - _TAIL_SHARE)
+            idx = _thin(d.shape[0], (d > threshold) | top)
+            d, pos = d[idx], pos[idx]
         flagged = d > threshold
         ax.vlines(pos[~flagged], 0, d[~flagged], color=_P["points"], linewidth=1.2)
         ax.vlines(pos[flagged], 0, d[flagged], color=_P["critical"], linewidth=1.6)
@@ -213,7 +273,7 @@ def plot_outliers(result: CheckResult, ax: Axes) -> Axes:
         top = np.argsort(np.where(flagged, d, -np.inf))[::-1][: min(5, int(flagged.sum()))]
         for i in top:
             ax.annotate(
-                str(distances.index[i]),
+                str(distances.index[pos[i]]),
                 xy=(pos[i], d[i]),
                 xytext=(4, 2),
                 textcoords="offset points",
@@ -287,17 +347,46 @@ def plot_collinearity(result: CheckResult, ax: Axes) -> Axes:
     return ax
 
 
+def _qq_ranks(
+    values: np.ndarray, cdf: Callable[[np.ndarray], np.ndarray] | None = None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Ranks (1-based) of the sorted points a Q-Q plot draws, and those its band uses.
+
+    ``cdf`` maps the sorted ``values`` to the uniform scale ``u`` (they already
+    are on it when omitted). Up to ``_MAX_PLOT_POINTS`` everything is drawn.
+    Past it, the points are a subsample that keeps both ends and every point
+    outside its 95% band, and the band, a smooth curve, is drawn through a
+    subsample of its own. The i-th of n points is outside when the
+    Beta(i, n - i + 1) CDF at ``u`` is below 0.025 or above 0.975, which is
+    much cheaper than the band's quantiles.
+    """
+    n = values.shape[0]
+    i = np.arange(1, n + 1)
+    if n <= _MAX_PLOT_POINTS:
+        return i, i
+    u = values if cdf is None else cdf(values)
+    level = special.betainc(i, n - i + 1, np.clip(u, 0.0, 1.0))
+    keep = (level < 0.025) | (level > 0.975)
+    ends = np.zeros(n, dtype=bool)
+    ends[[0, -1]] = True
+    return i[_thin(n, keep | ends)], i[_thin(n, ends)]
+
+
 def _qq(ax: Axes, values: np.ndarray, *, loc: float = 0.0, scale: float = 1.0) -> None:
     """Q-Q points against N(loc, scale²) with its line and a 95% pointwise band."""
     values = np.sort(values)
     n = values.shape[0]
-    i = np.arange(1, n + 1)
-    theo = stats.norm.ppf((i - 0.5) / n)
-    band_lo = loc + scale * stats.norm.ppf(stats.beta.ppf(0.025, i, n - i + 1))
-    band_hi = loc + scale * stats.norm.ppf(stats.beta.ppf(0.975, i, n - i + 1))
-    ax.fill_between(theo, band_lo, band_hi, color=_P["grid"], alpha=0.8, linewidth=0)
-    ax.plot(theo, loc + scale * theo, color=_P["fit"], linewidth=2)
-    _scatter(ax, theo, values)
+    ranks, band = _qq_ranks(values, partial(stats.norm.cdf, loc=loc, scale=scale))
+    values = values[ranks - 1]
+    theo = stats.norm.ppf((ranks - 0.5) / n)
+    line = stats.norm.ppf((band - 0.5) / n)
+    band_lo = loc + scale * stats.norm.ppf(stats.beta.ppf(0.025, band, n - band + 1))
+    band_hi = loc + scale * stats.norm.ppf(stats.beta.ppf(0.975, band, n - band + 1))
+    ax.fill_between(line, band_lo, band_hi, color=_P["grid"], alpha=0.8, linewidth=0)
+    ax.plot(line, loc + scale * line, color=_P["fit"], linewidth=2)
+    ax.scatter(
+        theo, values, s=16, color=_P["points"], alpha=0.75, linewidths=0, rasterized=n > 5000
+    )
     ax.set_xlabel("Standard normal quantiles")
 
 
@@ -317,22 +406,20 @@ def _plot_uniformity_ax(source: Any, ax: Axes) -> Axes:
     raw = source.scaled_residuals if hasattr(source, "scaled_residuals") else source.residuals
     values = np.sort(np.asarray(raw, dtype=float))
     n = values.shape[0]
-    i = np.arange(1, n + 1)
-    theo = (i - 0.5) / n
+    ranks, band = _qq_ranks(values)  # residuals at 0 or 1 are outside every band: kept
+    values = values[ranks - 1]
+    theo = (ranks - 0.5) / n
+    band_x = (band - 0.5) / n
+    band_lo = stats.beta.ppf(0.025, band, n - band + 1)
+    band_hi = stats.beta.ppf(0.975, band, n - band + 1)
+    outside = (values <= 0.0) | (values >= 1.0)
+    dots: dict[str, Any] = {"s": 16, "alpha": 0.75, "linewidths": 0, "rasterized": n > 5000}
     with _style():
-        ax.fill_between(
-            theo,
-            stats.beta.ppf(0.025, i, n - i + 1),
-            stats.beta.ppf(0.975, i, n - i + 1),
-            color=_P["grid"],
-            alpha=0.8,
-            linewidth=0,
-        )
+        ax.fill_between(band_x, band_lo, band_hi, color=_P["grid"], alpha=0.8, linewidth=0)
         ax.plot([0, 1], [0, 1], color=_P["fit"], linewidth=2)
-        outside = (values <= 0.0) | (values >= 1.0)
-        _scatter(ax, theo[~outside], values[~outside])
+        ax.scatter(theo[~outside], values[~outside], color=_P["points"], **dots)
         if outside.any():
-            _scatter(ax, theo[outside], values[outside], color=_P["critical"])
+            ax.scatter(theo[outside], values[outside], color=_P["critical"], **dots)
         subtitle = "Dots should fall along the line"
         p_value = getattr(source, "p_value", None)
         if p_value is not None:
@@ -416,7 +503,7 @@ def plot_overdispersion(result: CheckResult, ax: Axes) -> Axes:
     draws = _simulated_draws(result)
     dashed: dict[str, Any] = {"color": _P["muted"], "linewidth": 1.5, "linestyle": (0, (4, 3))}
     with _style():
-        _scatter(ax, mu, sq, s=10, alpha=0.35)
+        _scatter_fitted(ax, adapter, mu, sq, s=10, alpha=0.35)
         if draws is None:
             grid = np.linspace(np.min(mu), np.max(mu), 100)
             ax.plot(grid, grid, **dashed)
@@ -577,6 +664,29 @@ def plot_binned_residuals(result: CheckResult, ax: Axes) -> Axes:
     return ax
 
 
+def _density(values: np.ndarray, grid: np.ndarray) -> np.ndarray:
+    """Gaussian kernel density of ``values`` at ``grid``, with Scott's bandwidth.
+
+    Exactly :class:`scipy.stats.gaussian_kde` up to ``_MAX_KDE_POINTS``
+    values, whose cost grows as n x grid size. Past that, a binned KDE: the
+    counts on a fine grid convolved with the kernel, which uses every value
+    and differs from the exact estimate by a fraction of the bin width, far
+    below the bandwidth.
+    """
+    n = values.shape[0]
+    if n <= _MAX_KDE_POINTS:
+        return np.asarray(stats.gaussian_kde(values)(grid))
+    bw = float(np.std(values, ddof=1)) * n ** (-1 / 5)  # gaussian_kde's Scott factor
+    lo = min(float(np.min(values)), float(grid[0])) - 4 * bw
+    hi = max(float(np.max(values)), float(grid[-1])) + 4 * bw
+    counts, edges = np.histogram(values, bins=_KDE_BINS, range=(lo, hi))
+    width = edges[1] - edges[0]
+    reach = int(np.ceil(4 * bw / width))
+    kernel = stats.norm.pdf(np.arange(-reach, reach + 1) * width, scale=bw)
+    fine = np.convolve(counts, kernel, mode="same") / n
+    return np.interp(grid, (edges[:-1] + edges[1:]) / 2, fine)
+
+
 # ----------------------------------------------------------------- dispatch
 def plot_predictions(result: CheckResult, ax: Axes) -> Axes:
     """Posterior predictive check: replicated data against the observed data."""
@@ -614,9 +724,9 @@ def plot_predictions(result: CheckResult, ax: Axes) -> Axes:
             grid = np.linspace(lo, hi, 256)
             for rep in simulated:
                 if np.ptp(rep) > 0:
-                    density = stats.gaussian_kde(rep)(grid)
+                    density = _density(rep, grid)
                     ax.plot(grid, density, color=_P["points"], linewidth=0.8, alpha=0.25)
-            ax.plot(grid, stats.gaussian_kde(observed)(grid), color=_P["fit"], linewidth=2.2)
+            ax.plot(grid, _density(observed, grid), color=_P["fit"], linewidth=2.2)
             ax.set_xlabel("Response")
             ax.set_ylabel("Density")
             handles = [
@@ -712,13 +822,17 @@ def plot_model_check(
 ) -> Figure:
     """Draw every diagnostic of a :class:`~checkmodel.ModelCheckReport` in one grid.
 
-    Linear models get seven panels: the posterior predictive check, linearity,
-    homogeneity of variance, influential observations, collinearity, normality
-    and autocorrelation. Bayesian models show the predictive check and the
-    R-hat of each parameter.
+    Linear models get six panels: the posterior predictive check, linearity,
+    homogeneity of variance, influential observations, collinearity and
+    normality, plus autocorrelation when the report includes it. Bayesian
+    models show the predictive check and the R-hat of each parameter.
     Mixed models add one Q-Q panel per random-effect term; count models an
     overdispersion panel; non-Gaussian models a uniform Q-Q plot of simulated
     residuals. Singularity and convergence have no plot.
+
+    With more than 5000 observations each panel draws a fixed-seed subsample
+    that always keeps the points outside the bands and those flagged by
+    Cook's distance; the checks themselves use every observation.
 
     Parameters
     ----------

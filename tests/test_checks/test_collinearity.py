@@ -99,7 +99,8 @@ def test_sklearn_matches_statsmodels(mtcars_ols, mtcars_logit, reference):
 
 def test_penalized_sklearn_uses_design_matrix(mtcars, ols):
     X, y = mtcars[["wt", "hp"]], mtcars["mpg"]
-    ridge = check_collinearity(Ridge(alpha=10.0).fit(X, y), X, y)
+    with pytest.warns(UserWarning, match="penalized fit"):
+        ridge = check_collinearity(Ridge(alpha=10.0).fit(X, y), X, y)
     np.testing.assert_allclose(ridge.table["VIF"], check_collinearity(ols).table["VIF"])
 
 
@@ -150,3 +151,40 @@ def test_plot_switches_to_log_scale_for_huge_vif():
     y = X.sum(axis=1) + rng.normal(size=200)
     fig = check_collinearity(LinearRegression().fit(X, y), X, y).plot()
     assert fig.axes[0].get_xscale() == "log"
+
+
+# ------------------------------------------------------ perfect collinearity
+def test_rank_deficient_design_fails(mtcars):
+    # Every level of cyl as a dummy plus the intercept: cyl_8 = 1 - cyl_4 - cyl_6.
+    X = pd.concat(
+        [mtcars[["wt"]], pd.get_dummies(mtcars["cyl"], prefix="cyl", dtype=float)], axis=1
+    )
+    y = mtcars["mpg"]
+    with pytest.warns(UserWarning, match="Model matrix is rank deficient"):
+        res = check_collinearity(LinearRegression().fit(X, y), X, y)
+    assert res.passed is False
+    assert res.rank_deficient is True
+    assert res.aliased == ["cyl_8"]
+    assert res.message == (
+        "Warning: Perfect collinearity: the model matrix is rank deficient (aliased terms: cyl_8)."
+    )
+
+
+def test_aliased_columns_match_r(mtcars):
+    # lm(mpg ~ wt + hp + wt2) in R gives NA for wt2, the later of the two collinear columns.
+    X = mtcars[["wt", "hp"]].assign(wt2=mtcars["wt"] * 2, hp_wt=mtcars["hp"] + mtcars["wt"])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        fit = sm.OLS(mtcars["mpg"], sm.add_constant(X)).fit()
+        res = check_collinearity(fit)
+    assert res.aliased == ["wt2", "hp_wt"]
+    assert not res.passed and res.rank_deficient
+    assert res.message.endswith("(aliased terms: wt2, hp_wt).")
+
+
+def test_full_rank_design_is_not_rank_deficient(ols, fit):
+    for model in (ols, fit("lm_mtcars_cyl"), fit("lm_collinear")):
+        res = check_collinearity(model)
+        assert res.rank_deficient is False
+        assert res.aliased == []
+    assert check_collinearity(ols).passed

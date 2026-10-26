@@ -36,7 +36,8 @@ PyMC and bambi models wrapped with `bayesian()` (Python 3.12+).
 - **scikit-learn** estimators need `X=` and `y=`, because they do not keep
   their training data. Penalized models have no likelihood, so
   `model_performance()` leaves out AIC, AICc and BIC; leverage and VIFs come
-  from the design matrix. `PoissonRegressor` and `GammaRegressor` behave like
+  from the design matrix, and the checks that use leverage or standardized
+  residuals warn that they are approximate. `PoissonRegressor` and `GammaRegressor` behave like
   the Poisson and other GLM columns (penalized unless `alpha=0`).
 - **statsmodels discrete models** (`Logit`, `Probit`, `Poisson`,
   `NegativeBinomial`) behave like the GLM of the same family and link. A

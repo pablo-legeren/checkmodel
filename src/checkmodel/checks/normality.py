@@ -11,7 +11,7 @@ from scipy import stats
 
 from .._introspection import BaseAdapter, StatsmodelsMixedAdapter, as_adapter
 from .._types import ArrayLike, CheckNotApplicableError, FloatArray, Model
-from ._base import CheckResult, format_p
+from ._base import CheckResult, format_p, warn_about_fit
 
 __all__ = ["NormalityResult", "RandomEffectsNormalityResult", "check_normality"]
 
@@ -121,6 +121,11 @@ def check_normality(
         For non-Gaussian models, where normal residuals are not expected, or
         ``effects="random"`` on a model without random effects.
 
+    Warns
+    -----
+    UserWarning
+        For a penalized fit, whose standardized residuals ignore the penalty.
+
     Notes
     -----
     Formal normality tests reject trivial departures in large samples. Look
@@ -143,6 +148,7 @@ def check_normality(
         raise CheckNotApplicableError(
             "Checking normality of residuals is only appropriate for linear models."
         )
+    warn_about_fit(adapter, separation=False)
     resid = adapter.std_residuals
     resid = resid[np.isfinite(resid)]
     if resid.shape[0] < 3:
@@ -153,6 +159,11 @@ def check_normality(
         message = f"OK: residuals appear as normally distributed ({format_p(p)})."
     else:
         message = f"Warning: Non-normality of residuals detected ({format_p(p)})."
+        if method == "Kolmogorov-Smirnov":
+            message += (
+                " With large samples this test flags trivial departures; "
+                "inspect the Q-Q plot (`result.plot()`)."
+            )
     return NormalityResult(
         passed=passed,
         method=method,

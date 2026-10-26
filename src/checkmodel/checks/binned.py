@@ -11,7 +11,7 @@ from scipy import stats
 
 from .._introspection import as_adapter
 from .._types import ArrayLike, CheckNotApplicableError, Model
-from ._base import CheckResult
+from ._base import CheckResult, warn_about_fit
 
 __all__ = ["BinnedResidualsResult", "binned_residuals"]
 
@@ -87,6 +87,7 @@ def binned_residuals(
     adapter = as_adapter(model, X, y)
     if not adapter.info.is_binomial:
         raise CheckNotApplicableError("Binned residuals are only used for binomial models.")
+    warn_about_fit(adapter, penalized=False)
     bernoulli = adapter.info.is_bernoulli
     if not bernoulli:
         ci_type = "gaussian"

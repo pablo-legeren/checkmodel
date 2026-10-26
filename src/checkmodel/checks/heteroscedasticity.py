@@ -9,7 +9,7 @@ from scipy import stats
 
 from .._introspection import as_adapter
 from .._types import ArrayLike, CheckNotApplicableError, Model
-from ._base import CheckResult, format_p
+from ._base import CheckResult, format_p, warn_about_fit
 
 __all__ = ["HeteroscedasticityResult", "check_heteroscedasticity"]
 
@@ -60,6 +60,11 @@ def check_heteroscedasticity(
     ------
     CheckNotApplicableError
         For non-Gaussian models.
+
+    Warns
+    -----
+    UserWarning
+        For a penalized fit, whose residual degrees of freedom ignore the penalty.
     """
     adapter = as_adapter(model, X, y)
     if not adapter.info.is_linear:
@@ -67,6 +72,7 @@ def check_heteroscedasticity(
         if adapter.info.is_count:
             message += " Check count models for overdispersion or zero-inflation instead."
         raise CheckNotApplicableError(message)
+    warn_about_fit(adapter, separation=False)
     r = adapter.pearson_residuals
     # S² = df_resid * sigma² / n: RSS / n for OLS, the REML sigma for mixed models.
     u = r**2 / (adapter.df_resid * adapter.scale / r.shape[0])
