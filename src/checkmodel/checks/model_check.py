@@ -11,7 +11,7 @@ import pandas as pd
 from .._bayes import BayesianModel, as_bayesian
 from .._introspection import BaseAdapter, as_adapter
 from .._types import ArrayLike, CheckNotApplicableError, Model, UnsupportedModelError
-from ._base import CheckResult
+from ._base import CheckResult, fit_warnings_issued, penalized_note, warn_about_fit
 from .autocorrelation import check_autocorrelation
 from .binned import binned_residuals
 from .collinearity import check_collinearity
@@ -76,7 +76,13 @@ def _frequentist_checks(adapter: BaseAdapter) -> list[str]:
             "convergence",
         ]
     if info.is_linear:
-        return ["normality", "heteroscedasticity", "collinearity", "outliers", "autocorrelation"]
+        checks = ["normality", "heteroscedasticity", "collinearity", "outliers"]
+        # Serial correlation only means something when the rows have an order. In
+        # cross-sectional data the Durbin-Watson test just reacts to how the rows
+        # happen to be sorted, so, like R's check_model(), leave it out there.
+        if isinstance(adapter.index(), (pd.DatetimeIndex, pd.PeriodIndex)):
+            checks.append("autocorrelation")
+        return checks
     # Non-Gaussian models: simulated quantile residuals take the place of the
     # normal Q-Q plot, as `residual_type = "simulated"` does in R.
     if info.is_binomial:
@@ -152,7 +158,11 @@ class ModelCheckReport(Mapping[str, CheckResult]):
             f"# Model checks: {info.model_class} ({info.family}, {info.link} link), "
             f"n = {self.adapter.n_obs}"
         )
-        lines = [header, ""]
+        lines = [header]
+        note = penalized_note(self.adapter) if isinstance(self.adapter, BaseAdapter) else None
+        if note is not None:
+            lines.append(f"Note: {note}")
+        lines.append("")
         lines += [f"{r.title}: " + r.message.replace("\n", "\n  ") for r in self._results.values()]
         if self.skipped:
             lines += ["", "Skipped:"]
@@ -176,8 +186,9 @@ def check_model(
     The model type decides what runs, as in ``performance::check_model()``.
     Every model gets a posterior predictive check first, then:
 
-    * linear models: normality, heteroscedasticity, collinearity, outliers
-      and autocorrelation;
+    * linear models: normality, heteroscedasticity, collinearity and
+      outliers, plus autocorrelation when the observations are indexed by
+      time (a :class:`pandas.DatetimeIndex` or :class:`pandas.PeriodIndex`);
     * linear mixed models: normality of residuals and of random effects,
       heteroscedasticity, collinearity, outliers, singularity and convergence;
     * logistic regression: collinearity, outliers, binned residuals and
@@ -199,6 +210,9 @@ def check_model(
         ``"collinearity"``, ``"outliers"``, ``"autocorrelation"``,
         ``"binned_residuals"``, ``"singularity"``, ``"convergence"``,
         ``"overdispersion"``, ``"zeroinflation"`` and ``"residuals"``.
+        Named checks run even when they are not in the default set, so
+        ``checks=[..., "autocorrelation"]`` tests serial correlation of a
+        model fitted on rows without a time index.
     alpha
         Significance level for the formal tests.
     random_state
@@ -209,11 +223,19 @@ def check_model(
     -------
     ModelCheckReport
 
+    Warns
+    -----
+    UserWarning
+        Once per call, for a penalized fit (ridge, lasso, ...), whose leverage,
+        Cook's distance and standardized residuals ignore the penalty, and for
+        a binomial model with complete separation.
+
     Examples
     --------
     >>> report = check_model(fit)  # doctest: +SKIP
     >>> report.plot()  # doctest: +SKIP
     >>> report["normality"].p_value  # doctest: +SKIP
+    >>> check_model(fit, checks=["normality", "autocorrelation"])  # doctest: +SKIP
     """
     bayes = as_bayesian(model)
     adapter: BaseAdapter | BayesianModel = bayes if bayes is not None else as_adapter(model, X, y)
@@ -225,14 +247,17 @@ def check_model(
         unknown = [c for c in wanted if c not in _CHECKS]
         if unknown:
             raise ValueError(f"Unknown checks {unknown}; choose from {list(_CHECKS)}.")
+    if isinstance(adapter, BaseAdapter):
+        warn_about_fit(adapter)
     results: dict[str, CheckResult] = {}
     skipped: dict[str, str] = {}
-    for name in wanted:
-        kwargs: dict[str, Any] = {"alpha": alpha} if name in _ALPHA_CHECKS else {}
-        if name in _RANDOM_CHECKS:
-            kwargs["random_state"] = random_state
-        try:
-            results[name] = _CHECKS[name](adapter, **kwargs)
-        except (CheckNotApplicableError, UnsupportedModelError) as exc:
-            skipped[name] = str(exc)
+    with fit_warnings_issued():
+        for name in wanted:
+            kwargs: dict[str, Any] = {"alpha": alpha} if name in _ALPHA_CHECKS else {}
+            if name in _RANDOM_CHECKS:
+                kwargs["random_state"] = random_state
+            try:
+                results[name] = _CHECKS[name](adapter, **kwargs)
+            except (CheckNotApplicableError, UnsupportedModelError) as exc:
+                skipped[name] = str(exc)
     return ModelCheckReport(adapter, results, skipped)

@@ -175,6 +175,33 @@ class BaseAdapter(ABC):
         """Rank of the (weighted) design matrix."""
         return int(np.linalg.matrix_rank(self._wX))
 
+    @cached_property
+    def aliased(self) -> list[int]:
+        """Positions of the design-matrix columns that are linear combinations of earlier ones.
+
+        These are the coefficients R reports as ``NA``. Going left to right, a
+        column is aliased when adding it does not raise the rank, judged by a
+        pivoted QR decomposition with the tolerance :attr:`hat` uses. Empty for
+        a full-rank design.
+        """
+        if self.rank == self.n_params:
+            return []
+        from scipy import linalg
+
+        wX = self._wX
+        tol = max(wX.shape) * np.finfo(float).eps
+
+        def rank(cols: list[int]) -> int:
+            R, _ = linalg.qr(wX[:, cols], mode="r", pivoting=True)
+            d = np.abs(np.diag(R))
+            return int(np.sum(d > d.max() * tol)) if d.max() > 0 else 0
+
+        kept: list[int] = []
+        aliased: list[int] = []
+        for j in range(wX.shape[1]):
+            (kept if rank([*kept, j]) > len(kept) else aliased).append(j)
+        return aliased
+
     @property
     def df_resid(self) -> int:
         """Residual degrees of freedom."""

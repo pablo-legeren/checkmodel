@@ -33,7 +33,15 @@ Normality of residuals: Warning: Non-normality of residuals detected (p = 0.021)
 Homogeneity of variance: OK: Error variance appears to be homoscedastic (p = 0.402).
 Collinearity: OK: Low collinearity (all VIF < 5; max 1.77).
 Influential observations: OK: No outliers detected (Cook's distance > 0.808).
-Autocorrelation: Warning: Autocorrelated residuals detected (p = 0.041).
+```
+
+Autocorrelation is not in the list: the cars in `mtcars` have no natural
+order, and a Durbin-Watson test on unordered rows only reacts to how they
+happen to be sorted. `check_model()` adds it when the data are indexed by time
+(a pandas `DatetimeIndex` or `PeriodIndex`). Request it explicitly otherwise:
+
+```python
+check_model(fit, checks=["normality", "autocorrelation"])
 ```
 
 `report.plot()` draws all the diagnostics in one figure. Each panel says what
@@ -68,6 +76,16 @@ check_collinearity(fit).to_dataframe()   # VIF table, one row per term
 check_outliers(fit, threshold="4/n")      # use the 4/n rule instead of R's default
 ```
 
+A model matrix with exactly collinear columns, such as a dummy for every
+category plus an intercept, fails the collinearity check whatever its VIFs:
+
+```text
+Warning: Perfect collinearity: the model matrix is rank deficient (aliased terms: cyl_8).
+```
+
+`result.rank_deficient` and `result.aliased` hold the same information; the
+aliased columns are the ones R reports as `NA` coefficients.
+
 ## scikit-learn models
 
 scikit-learn estimators do not store their training data, so pass it:
@@ -81,9 +99,17 @@ check_model(model, X=X, y=y)
 ```
 
 The numbers are the same as for the statsmodels fit above. Penalized models
-(`Ridge`, `Lasso`, `ElasticNet`, penalized `LogisticRegression`) are
-supported too; they have no likelihood-based criteria, so `AIC` and `BIC` are
-left out of their metric tables.
+(`Ridge`, `Lasso`, `ElasticNet`, penalized `LogisticRegression`,
+`PoissonRegressor` and `GammaRegressor` with `alpha > 0`) are supported too.
+They have no likelihood-based criteria, so `AIC` and `BIC` are left out of
+their metric tables. Their leverage, Cook's distance and standardized
+residuals are computed as if the model were unpenalized, so the checks that
+use them come with a warning, and the report says so in its header:
+
+```text
+# Model checks: Ridge (gaussian, identity link), n = 32
+Note: `Ridge` is a penalized fit; leverage, Cook's distance and standardized residuals are computed as for the unpenalized model and are approximate.
+```
 
 ## Logistic regression
 
@@ -95,7 +121,9 @@ check_model(logit)
 ```
 
 Normality and homoscedasticity are not expected for a binary outcome, so they
-are not run. Binned residuals take their place.
+are not run. Binned residuals take their place. If every fitted probability is
+0 or 1 (complete separation), the coefficients are not identified and
+`check_model()` warns that the diagnostics are unreliable.
 
 ## Count data
 

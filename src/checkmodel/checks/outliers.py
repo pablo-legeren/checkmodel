@@ -11,7 +11,7 @@ from scipy import stats
 
 from .._introspection import BaseAdapter, as_adapter
 from .._types import ArrayLike, Model
-from ._base import CheckResult
+from ._base import CheckResult, warn_about_fit
 
 __all__ = ["OutliersResult", "check_outliers"]
 
@@ -86,6 +86,11 @@ def check_outliers(
     -------
     OutliersResult
 
+    Warns
+    -----
+    UserWarning
+        For a penalized fit, and for a binomial model with complete separation.
+
     Notes
     -----
     For penalized scikit-learn models (ridge, lasso, elastic net) leverage
@@ -93,6 +98,7 @@ def check_outliers(
     residuals are the penalized model's own.
     """
     adapter = as_adapter(model, X, y)
+    warn_about_fit(adapter)
     n = adapter.n_obs
     if threshold == "f":
         cutoff = _default_threshold(adapter)

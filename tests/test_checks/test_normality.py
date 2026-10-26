@@ -85,3 +85,34 @@ def test_plot(ols):
 
     fig2, ax = plt.subplots()
     assert check_normality(ols).plot(ax=ax) is fig2
+
+
+def _large_ols(errors):
+    rng = np.random.default_rng(5)
+    x = rng.normal(size=errors.shape[0])
+    return smf.ols("y ~ x", pd.DataFrame({"x": x, "y": 1 + x + errors})).fit()
+
+
+def test_large_sample_failure_points_to_the_qq_plot():
+    rng = np.random.default_rng(5)
+    res = check_normality(_large_ols(rng.exponential(size=6000)))
+    assert res.method == "Kolmogorov-Smirnov"
+    assert not res.passed
+    assert res.message == (
+        "Warning: Non-normality of residuals detected (p < .001). With large samples this "
+        "test flags trivial departures; inspect the Q-Q plot (`result.plot()`)."
+    )
+
+
+def test_large_sample_note_leaves_the_test_alone(fit):
+    from checkmodel.checks.normality import _test
+
+    rng = np.random.default_rng(5)
+    model = _large_ols(rng.standard_t(8, size=6000))
+    res = check_normality(model)
+    method, statistic, p = _test(res.residuals)
+    assert (res.method, res.statistic, res.p_value) == (method, statistic, p)
+    assert res.passed == (p >= 0.05)
+    # Passing large samples and failing small ones get no note.
+    assert "Q-Q plot" not in check_normality(fit("lm_large")).message
+    assert "Q-Q plot" not in check_normality(fit("lm_skewed")).message
