@@ -29,8 +29,13 @@ def _ic_weight(ic: pd.Series) -> pd.Series:
 
 
 def _same_data(adapters: Sequence[Any]) -> bool:
-    first = adapters[0].y
-    return all(a.y.shape == first.shape and np.allclose(a.y, first) for a in adapters[1:])
+    # On the untransformed response, as R: y ~ x and np.log(y) ~ x share their data.
+    first = adapters[0].untransformed_response
+    return all(
+        a.untransformed_response.shape == first.shape
+        and np.allclose(a.untransformed_response, first)
+        for a in adapters[1:]
+    )
 
 
 def _rank(table: pd.DataFrame, verbose: bool) -> pd.DataFrame:

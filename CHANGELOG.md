@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- AIC, AICc and BIC of a Gaussian model whose formula transforms the response
+  (`np.log(y)`, `np.log1p`, `np.log2`, `np.log10`, `np.sqrt`, `np.exp` or
+  `I(y**p)`) now include the Jacobian of the transformation, as R's
+  `performance` does. They were on the scale of the transformed response, so
+  `compare_performance()` made `np.log(y) ~ x` look far better than `y ~ x`:
+  on one dataset an AIC of 1110 instead of R's 3275, against 4050 for the
+  untransformed model. Applies to OLS, WLS, Gaussian GLMs and `MixedLM`
+  (with a warning under REML, as in R). `Log_lik` is unchanged.
+- `compare_performance()` no longer warns that the models were fit on
+  different data when they only transform the same response differently.
+
 ## [0.2.0] - 2026-10-26
 
 ### Changed

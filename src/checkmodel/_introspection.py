@@ -417,6 +417,43 @@ class BaseAdapter(ABC):
         """Log-likelihood under ``"ML"`` or ``"REML"``; only mixed models distinguish them."""
         return self.loglik
 
+    def response_transformation(self) -> tuple[str, str, float] | None:
+        """How the model formula transformed the response, as ``(function, variable, power)``.
+
+        ``power`` is only meaningful for ``"power"``. ``None`` when the response
+        is used as is or the transformation is not one :data:`_JACOBIANS` knows.
+        """
+        return None
+
+    @cached_property
+    def untransformed_response(self) -> FloatArray:
+        """The response before the formula transformed it; ``y`` when it was not."""
+        trans = self.response_transformation()
+        if trans is None:
+            return self.y
+        func, _, power = trans
+        return np.asarray(_UNTRANSFORM[func](self.y, power), dtype=float)
+
+    @cached_property
+    def loglik_jacobian(self) -> float | None:
+        """Log-likelihood correction for a transformed Gaussian response.
+
+        The sum of ``log |g'(y)|`` over the observations for a response fitted
+        as ``g(y)``, as ``insight::get_loglikelihood_adjustment()``. Adding it to
+        the log-likelihood puts AIC and BIC on the scale of the untransformed
+        response, so ``y ~ x`` and ``np.log(y) ~ x`` can be compared. ``None``
+        when there is nothing to correct or the correction is not finite.
+        """
+        trans = self.response_transformation()
+        if trans is None or self.info.family != "gaussian":
+            return None
+        func, _, power = trans
+        with np.errstate(divide="ignore", invalid="ignore"):
+            terms = _JACOBIANS[func](self.untransformed_response, power)
+            # insight's .weighted_sum(): weighted.mean(x, w) * length(x).
+            value = float(np.average(terms, weights=self.weights) * self.n_obs)
+        return value if np.isfinite(value) else None
+
     @cached_property
     def _null_mu(self) -> FloatArray:
         if self.has_intercept:
@@ -535,6 +572,44 @@ class BaseAdapter(ABC):
 _IDENT = re.compile(r"[A-Za-z_.][A-Za-z0-9_.]*")
 _QUOTED = re.compile(r"""["']([^"']+)["']""")
 
+# Response transformations whose Jacobian insight::get_loglikelihood_adjustment()
+# knows: log |g'(y)| per observation, and the inverse that recovers y from g(y).
+_JACOBIANS: dict[str, Callable[[FloatArray, float], FloatArray]] = {
+    "log": lambda y, p: np.log(1.0 / y),
+    "log1p": lambda y, p: np.log(1.0 / (y + 1.0)),
+    "log2": lambda y, p: np.log(1.0 / (y * np.log(2.0))),
+    "log10": lambda y, p: np.log(1.0 / (y * np.log(10.0))),
+    "exp": lambda y, p: y,
+    "sqrt": lambda y, p: np.log(0.5 / np.sqrt(y)),
+    "power": lambda y, p: np.log(p * y ** (p - 1.0)),
+}
+_UNTRANSFORM: dict[str, Callable[[FloatArray, float], FloatArray]] = {
+    "log": lambda z, p: np.exp(z),
+    "log1p": lambda z, p: np.expm1(z),
+    "log2": lambda z, p: 2.0**z,
+    "log10": lambda z, p: 10.0**z,
+    "exp": lambda z, p: np.log(z),
+    "sqrt": lambda z, p: z**2,
+    "power": lambda z, p: np.sign(z) * np.abs(z) ** (1.0 / p),
+}
+_RESPONSE_FUNC = re.compile(
+    r"^(?:np\.|numpy\.)?(log1p|log2|log10|log|exp|sqrt)\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)$"
+)
+_RESPONSE_POWER = re.compile(r"^I\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\*\*\s*([0-9]*\.?[0-9]+)\s*\)$")
+
+
+def _response_transformation(formula: Any) -> tuple[str, str, float] | None:
+    """Parse the left-hand side of a formula such as ``np.log(y) ~ x`` or ``I(y**2) ~ x``."""
+    if not isinstance(formula, str) or "~" not in formula:
+        return None
+    lhs = formula.split("~", 1)[0].strip()
+    if m := _RESPONSE_FUNC.match(lhs):
+        return m.group(1), m.group(2), 1.0
+    if m := _RESPONSE_POWER.match(lhs):
+        power = float(m.group(2))
+        return ("power", m.group(1), power) if power != 1.0 else None
+    return None
+
 
 def _variables_in(expr: str, columns: pd.Index) -> list[str]:
     """Find the data columns referenced by a formula fragment such as ``C(cyl) + np.log(x)``."""
@@ -619,6 +694,9 @@ class _StatsmodelsMixin:
         names = self.column_names()
         icpt = self.intercept_index()
         return [Term(names[j], (j,)) for j in range(len(names)) if j != icpt]
+
+    def response_transformation(self) -> tuple[str, str, float] | None:
+        return _response_transformation(getattr(self._sm, "formula", None))
 
     def index(self) -> pd.Index:
         labels = getattr(self._sm.data, "row_labels", None)

@@ -143,6 +143,12 @@ def model_performance(
     models, like R's ``AIC()``. statsmodels' ``OLSResults.aic`` does not, so
     its values are 2 lower. Penalized scikit-learn models have no
     likelihood-based criteria; AIC, AICc and BIC are omitted for them.
+
+    When the formula transforms a Gaussian response (``np.log(y)``,
+    ``np.log1p``, ``np.log2``, ``np.log10``, ``np.sqrt``, ``np.exp`` or
+    ``I(y**p)``), AIC, AICc and BIC include the Jacobian of the
+    transformation, as in R. They are then on the scale of ``y`` and can be
+    compared with those of ``y ~ ...``. ``Log_lik`` is left uncorrected.
     """
     bayes = as_bayesian(model)
     if bayes is not None:
@@ -156,13 +162,27 @@ def model_performance(
         estimator = "REML" if info.is_mixed else "ML"
     ll = None if info.is_penalized else adapter.loglik_with(estimator)
     k = adapter.loglik_df
-    if ll is not None:
+    if ll is not None and wanted & {"AIC", "AICC", "BIC"}:
+        # Like insight::get_loglikelihood(check_response = TRUE): a transformed
+        # response adds the Jacobian, so the criteria are on the scale of y.
+        ll_ic = ll
+        jacobian = adapter.loglik_jacobian
+        if jacobian is not None:
+            ll_ic = ll + jacobian
+            if info.is_mixed and estimator == "REML":
+                warnings.warn(
+                    "Log-likelihood is corrected for models with transformed response. "
+                    "However, this ignores `estimator='REML'`. Log-likelihood value is "
+                    "probably inaccurate.",
+                    UserWarning,
+                    stacklevel=2,
+                )
         if "AIC" in wanted:
-            out["AIC"] = -2.0 * ll + 2.0 * k
+            out["AIC"] = -2.0 * ll_ic + 2.0 * k
         if "AICC" in wanted:
-            out["AICc"] = -2.0 * ll + 2.0 * k * n / (n - k - 1)
+            out["AICc"] = -2.0 * ll_ic + 2.0 * k * n / (n - k - 1)
         if "BIC" in wanted:
-            out["BIC"] = -2.0 * ll + k * np.log(n)
+            out["BIC"] = -2.0 * ll_ic + k * np.log(n)
     if wanted & {"R2", "R2_ADJ"}:
         try:
             measures = dict(r2(adapter))
