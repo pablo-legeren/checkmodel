@@ -17,6 +17,8 @@ diagnostic panel.
 Every statistic is tested against the R implementation (`performance`,
 `lmtest`, `car`) to a tolerance of 1e-4.
 
+![check_model() diagnostic panel](https://raw.githubusercontent.com/pablo-legeren/checkmodel/main/docs/images/check_model.png)
+
 ## Installation
 
 ```bash
@@ -62,7 +64,6 @@ check_model(fit, checks=["normality", "autocorrelation"])
 check_autocorrelation(fit)   # or on its own
 ```
 
-![check_model() diagnostic panel](https://raw.githubusercontent.com/pablo-legeren/checkmodel/main/docs/images/check_model.png)
 
 scikit-learn estimators don't keep their training data, so pass it along:
 
