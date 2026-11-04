@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-04
+
 ### Fixed
 
 - AIC, AICc and BIC of a Gaussian model whose formula transforms the response
@@ -122,6 +124,7 @@ First public release.
   (to 1e-4) on 27 reference models; Bayesian statistics on the same posterior
   draws. Deliberate differences are listed in `docs/comparison-with-r.md`.
 
-[Unreleased]: https://github.com/pablo-legeren/checkmodel/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/pablo-legeren/checkmodel/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/pablo-legeren/checkmodel/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/pablo-legeren/checkmodel/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/pablo-legeren/checkmodel/releases/tag/v0.1.0
