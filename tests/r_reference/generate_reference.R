@@ -328,6 +328,32 @@ reference$compare <- list(
   logit = as_table(compare_performance(logit_1, logit_2, verbose = FALSE))
 )
 
+# ------------------------------------------------- transformed responses
+# AIC, AICc and BIC of a model with a transformed response include the Jacobian
+# of the transformation (insight::get_loglikelihood(check_response = TRUE)).
+transformed <- list(
+  log = lm(log(mpg) ~ wt + hp, data = mtcars),
+  log1p = lm(log1p(mpg) ~ wt + hp, data = mtcars),
+  log2 = lm(log2(mpg) ~ wt + hp, data = mtcars),
+  log10 = lm(log10(mpg) ~ wt + hp, data = mtcars),
+  sqrt = lm(sqrt(mpg) ~ wt + hp, data = mtcars),
+  exp = lm(exp(wt) ~ hp + qsec, data = mtcars),
+  power = lm(I(mpg^2) ~ wt + hp, data = mtcars),
+  weighted_log = lm(log(mpg) ~ wt + hp, data = mtcars, weights = cyl),
+  glm_log = glm(log(mpg) ~ wt + hp, data = mtcars),
+  mixed_log_reml = lmer(log(Reaction) ~ Days + (1 | Subject), data = sleepstudy),
+  mixed_log_ml = lmer(log(Reaction) ~ Days + (1 | Subject), data = sleepstudy, REML = FALSE)
+)
+reference$transformed <- lapply(transformed, function(m) {
+  est <- if (inherits(m, "merMod") && isREML(m)) "REML" else "ML"
+  p <- suppressWarnings(model_performance(m, metrics = c("AIC", "AICc", "BIC"), estimator = est))
+  list(AIC = p$AIC, AICc = p$AICc, BIC = p$BIC)
+})
+reference$compare$transformed <- as_table(compare_performance(
+  lm(mpg ~ wt + hp, data = mtcars), transformed$log,
+  metrics = c("AIC", "AICc", "BIC")
+))
+
 write_json(
   reference,
   file.path(out_dir, "reference.json"),

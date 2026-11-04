@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import warnings
 
+import numpy as np  # noqa: F401  (np.log in the formulas below)
 import pandas as pd
 import pytest
 import statsmodels.api as sm
@@ -86,6 +87,17 @@ def test_warns_when_data_differ(nested, mtcars):
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         compare_performance(nested[0], other, verbose=False)
+
+
+def test_transformed_response_matches_r(nested, mtcars, reference):
+    # R compares y ~ x with log(y) ~ x on the scale of y, and sees the same data.
+    logged = smf.ols("np.log(mpg) ~ wt + hp", mtcars).fit()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        table = compare_performance(
+            nested[1], logged, names=["..1", "..2"], metrics=["AIC", "AICc", "BIC"]
+        )
+    _assert_table_matches(table, reference["compare"]["transformed"])
 
 
 def test_rank_ignores_incomplete_indices(nested, logits):
