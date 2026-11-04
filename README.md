@@ -34,9 +34,14 @@ pip install "checkmodel[bayes]"
 ## Quick example
 
 ```python
+import pandas as pd
 import statsmodels.formula.api as smf
 from checkmodel import check_model
 
+mtcars = pd.read_csv(
+    "https://raw.githubusercontent.com/pablo-legeren/checkmodel/main/tests/data/mtcars.csv",
+    index_col=0,
+)
 fit = smf.ols("mpg ~ wt + hp", data=mtcars).fit()
 report = check_model(fit)
 report.plot()
