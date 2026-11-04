@@ -3,7 +3,6 @@
 **Status: alpha – API may change before 1.0**
 
 [![PyPI version](https://img.shields.io/pypi/v/checkmodel.svg)](https://pypi.org/project/checkmodel/)
-[![Downloads](https://static.pepy.tech/badge/checkmodel/month)](https://pepy.tech/project/checkmodel)
 [![CI](https://github.com/pablo-legeren/checkmodel/actions/workflows/ci.yml/badge.svg)](https://github.com/pablo-legeren/checkmodel/actions/workflows/ci.yml)
 [![Python versions](https://img.shields.io/pypi/pyversions/checkmodel.svg)](https://pypi.org/project/checkmodel/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
